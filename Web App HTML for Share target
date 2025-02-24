@@ -87,7 +87,7 @@
     // Function to send link to n8n webhook
     async function processPhotoLink(link) {
       try {
-        const response = await fetch('https://n8n.yourdomain.com/webhook/google-photo-link', {
+        const response = await fetch('https://n8n.sputnik.sh/webhook-test/8cdbfb9b-ec45-462d-8436-d714da6da09d', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
