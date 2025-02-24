@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Photo Processor</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#4285f4">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .status {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 8px;
+      background-color: #f5f5f5;
+    }
+    .success {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .error {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Photo Processor</h1>
+    <p>Share Google Photos links to start the enhancement workflow</p>
+    
+    <div id="statusMessage" class="status hidden"></div>
+    
+    <div id="manualInput">
+      <h2>Manual Input</h2>
+      <p>Paste a Google Photos link below:</p>
+      <input type="text" id="photoLink" placeholder="https://photos.google.com/share/..." style="width: 100%; padding: 8px; margin-bottom: 10px;">
+      <button id="submitLink" style="padding: 8px 16px; background: #4285f4; color: white; border: none; border-radius: 4px;">Process Photo</button>
+    </div>
+  </div>
+
+  <script>
+    // Register service worker for PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('Service Worker registered'))
+        .catch(err => console.error('Service Worker registration failed:', err));
+    }
+
+    // Function to show status message
+    function showStatus(message, isError = false) {
+      const statusEl = document.getElementById('statusMessage');
+      statusEl.textContent = message;
+      statusEl.classList.remove('hidden', 'success', 'error');
+      statusEl.classList.add(isError ? 'error' : 'success');
+      
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+        statusEl.classList.add('hidden');
+      }, 5000);
+    }
+
+    // Handle manual link submission
+    document.getElementById('submitLink').addEventListener('click', () => {
+      const link = document.getElementById('photoLink').value.trim();
+      if (!link) {
+        showStatus('Please enter a valid Google Photos link', true);
+        return;
+      }
+      
+      processPhotoLink(link);
+    });
+
+    // Function to send link to n8n webhook
+    async function processPhotoLink(link) {
+      try {
+        const response = await fetch('https://n8n.yourdomain.com/webhook/google-photo-link', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ photoLink: link })
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to process photo');
+        }
+        
+        const result = await response.json();
+        showStatus('Photo processing started successfully!');
+        document.getElementById('photoLink').value = '';
+      } catch (error) {
+        showStatus(`Error: ${error.message}`, true);
+        console.error('Error:', error);
+      }
+    }
+
+    // Check if this page was opened via share target
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const sharedLink = urlParams.get('link');
+      const sharedText = urlParams.get('text');
+      
+      // Look for Google Photos link in shared content
+      if (sharedLink && sharedLink.includes('photos.google.com')) {
+        processPhotoLink(sharedLink);
+      } else if (sharedText && sharedText.includes('photos.google.com')) {
+        // Extract link from text if present
+        const matches = sharedText.match(/(https:\/\/photos\.google\.com\S+)/);
+        if (matches && matches[1]) {
+          processPhotoLink(matches[1]);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
