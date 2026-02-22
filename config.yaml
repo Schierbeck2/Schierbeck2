@@ -1,0 +1,29 @@
+# Home Assistant Add-on configuration
+name: "Home Food Manager"
+description: "Manage household food inventory, meal plans, recipes, and dietary preferences"
+version: "1.0.0"
+slug: "home_food_manager"
+url: "https://github.com/Schierbeck2/Schierbeck2"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 3000
+panel_icon: "mdi:food-apple"
+panel_title: "Food Manager"
+options:
+  log_level: info
+schema:
+  log_level: list(trace|debug|info|notice|warning|error|fatal)?
+ports:
+  3000/tcp: null
+ports_description:
+  3000/tcp: "Web interface (use ingress instead)"
+map:
+  - type: data
+    read_only: false
+environment:
+  DATABASE_URL: "file:/data/food-manager.db"

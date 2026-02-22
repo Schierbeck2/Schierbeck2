@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model InventoryItem {
+  id         String    @id @default(cuid())
+  name       String
+  category   String    // fridge, freezer, pantry
+  quantity   Float     @default(1)
+  unit       String    @default("item")
+  isLeftover Boolean   @default(false)
+  expiryDate DateTime?
+  notes      String?
+  addedAt    DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Person {
+  id                  String           @id @default(cuid())
+  name                String
+  dietaryRestrictions String           @default("[]") // JSON array
+  allergies           String           @default("[]") // JSON array
+  preferences         String           @default("[]") // JSON array
+  dislikes            String           @default("[]") // JSON array
+  calorieTarget       Int?
+  mealPlans           MealPlanPerson[]
+}
+
+model Recipe {
+  id           String     @id @default(cuid())
+  title        String
+  sourceUrl    String?
+  ingredients  String     @default("[]") // JSON array
+  instructions String     @default("[]") // JSON array
+  servings     Int?
+  prepTime     Int?       // minutes
+  cookTime     Int?       // minutes
+  tags         String     @default("[]") // JSON array
+  imageUrl     String?
+  createdAt    DateTime   @default(now())
+  mealPlans    MealPlan[]
+}
+
+model MealPlan {
+  id         String           @id @default(cuid())
+  date       DateTime
+  mealType   String           // breakfast, lunch, dinner, snack
+  recipeId   String?
+  recipe     Recipe?          @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  customMeal String?
+  notes      String?
+  persons    MealPlanPerson[]
+}
+
+model MealPlanPerson {
+  id         String   @id @default(cuid())
+  mealPlanId String
+  personId   String
+  mealPlan   MealPlan @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([mealPlanId, personId])
+}

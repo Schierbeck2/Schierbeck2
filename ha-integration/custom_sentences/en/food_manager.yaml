@@ -1,0 +1,101 @@
+# Home Assistant custom sentences for Food Manager voice control
+# Copy this file to: config/custom_sentences/en/food_manager.yaml
+
+language: en
+intents:
+  FoodManagerAddItem:
+    data:
+      - sentences:
+          - "add {item} to the {location}"
+          - "put {item} in the {location}"
+          - "add {quantity} {item} to the {location}"
+          - "add {quantity} {unit} of {item} to the {location}"
+          - "I bought {item}"
+          - "I bought {quantity} {item}"
+      - slots:
+          location:
+            - fridge
+            - freezer
+            - pantry
+            - refrigerator
+            - cabinet
+            - cupboard
+  FoodManagerRemoveItem:
+    data:
+      - sentences:
+          - "remove {item} from the {location}"
+          - "take {item} out of the {location}"
+          - "remove {item}"
+          - "we used the {item}"
+          - "we finished the {item}"
+          - "we ate the {item}"
+  FoodManagerListItems:
+    data:
+      - sentences:
+          - "what's in the {location}"
+          - "what do we have in the {location}"
+          - "list {location} items"
+          - "show me the {location}"
+          - "what's in the fridge"
+          - "what's in the freezer"
+          - "what's in the pantry"
+  FoodManagerExpiringSoon:
+    data:
+      - sentences:
+          - "what's expiring soon"
+          - "what food is expiring"
+          - "any food expiring soon"
+          - "check expiry dates"
+          - "what needs to be used"
+  FoodManagerAddLeftover:
+    data:
+      - sentences:
+          - "save {item} as leftovers"
+          - "add {item} to leftovers"
+          - "we have leftover {item}"
+          - "save leftovers of {item}"
+          - "put leftover {item} in the {location}"
+
+lists:
+  location:
+    values:
+      - in: "fridge"
+        out: "fridge"
+      - in: "refrigerator"
+        out: "fridge"
+      - in: "freezer"
+        out: "freezer"
+      - in: "pantry"
+        out: "pantry"
+      - in: "cabinet"
+        out: "pantry"
+      - in: "cupboard"
+        out: "pantry"
+  item:
+    wildcard: true
+  quantity:
+    range:
+      from: 1
+      to: 100
+  unit:
+    values:
+      - "pound"
+      - "pounds"
+      - "ounce"
+      - "ounces"
+      - "cup"
+      - "cups"
+      - "gallon"
+      - "gallons"
+      - "liter"
+      - "liters"
+      - "bag"
+      - "bags"
+      - "box"
+      - "boxes"
+      - "can"
+      - "cans"
+      - "package"
+      - "packages"
+      - "bunch"
+      - "dozen"

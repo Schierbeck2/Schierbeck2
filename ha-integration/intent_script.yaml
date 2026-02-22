@@ -1,0 +1,76 @@
+# Home Assistant intent scripts for Food Manager
+# Add this to your configuration.yaml or include it via:
+#   intent_script: !include intent_script.yaml
+#
+# Replace YOUR_ADDON_SLUG with the actual add-on slug (default: home_food_manager)
+# The add-on URL when using ingress is typically:
+#   http://homeassistant.local:8123/api/hassio_ingress/<ingress_token>
+#
+# Or if running as a separate container:
+#   http://localhost:3000
+
+FoodManagerAddItem:
+  speech:
+    text: "{{ response.speech }}"
+  action:
+    - service: rest_command.food_manager_action
+      data:
+        action: add_item
+        item: "{{ item }}"
+        location: "{{ location }}"
+        quantity: "{{ quantity | default('1') }}"
+        unit: "{{ unit | default('item') }}"
+
+FoodManagerRemoveItem:
+  speech:
+    text: "{{ response.speech }}"
+  action:
+    - service: rest_command.food_manager_action
+      data:
+        action: remove_item
+        item: "{{ item }}"
+        location: "{{ location | default('') }}"
+
+FoodManagerListItems:
+  speech:
+    text: "{{ response.speech }}"
+  action:
+    - service: rest_command.food_manager_action
+      data:
+        action: list_items
+        location: "{{ location }}"
+
+FoodManagerExpiringSoon:
+  speech:
+    text: "{{ response.speech }}"
+  action:
+    - service: rest_command.food_manager_action
+      data:
+        action: expiring_soon
+
+FoodManagerAddLeftover:
+  speech:
+    text: "{{ response.speech }}"
+  action:
+    - service: rest_command.food_manager_action
+      data:
+        action: add_leftover
+        item: "{{ item }}"
+        location: "{{ location | default('fridge') }}"
+
+# Add this rest_command to your configuration.yaml:
+#
+# rest_command:
+#   food_manager_action:
+#     url: "http://homeassistant.local:3000/api/ha"
+#     method: POST
+#     headers:
+#       Content-Type: "application/json"
+#     payload: >
+#       {
+#         "action": "{{ action }}",
+#         "item": "{{ item | default('') }}",
+#         "location": "{{ location | default('') }}",
+#         "quantity": "{{ quantity | default('1') }}",
+#         "unit": "{{ unit | default('item') }}"
+#       }
