@@ -1,0 +1,6 @@
+property_name,address,city,state,zip,num_lots,owner_name,phone,email,website,notes
+"Sunshine Mobile Home Park","123 Main St","Tampa","FL","33601","","","","","",""
+"Pine Valley MHC","456 Oak Ave","Phoenix","AZ","85001","","","","","",""
+"Lakeview Manufactured Housing","789 Lake Rd","Orlando","FL","32801","","","","","",""
+"Desert Palms Mobile Home Community","1010 Desert Blvd","Tucson","AZ","85701","","","","","",""
+"Green Acres MHP","2020 Country Ln","San Antonio","TX","78201","","","","","",""
