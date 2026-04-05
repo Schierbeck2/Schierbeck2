@@ -4,9 +4,15 @@ After each survey, the agent evaluates what worked and what didn't,
 then stores those learnings. Before future surveys, it loads past
 learnings to improve its approach.
 
+Strategies are scored by effectiveness and ranked competitively.
+New strategies must outperform existing ones to earn a spot in the
+top 20. This ensures the agent keeps its best learnings, not just
+the most recent.
+
 Tracks:
 - Completion rate (how many data fields were collected)
-- Effective phrases and conversation strategies
+- Ranked effective strategies (scored 1-10 by impact)
+- Ranked failed strategies (scored 1-10 by severity)
 - Common objections and successful responses
 - Timing patterns (when people are more receptive)
 """
@@ -17,6 +23,10 @@ from pathlib import Path
 
 from mistralai import Mistral
 
+MAX_EFFECTIVE_STRATEGIES = 20
+MAX_FAILED_STRATEGIES = 20
+MAX_OBJECTION_RESPONSES = 15
+MAX_GENERAL_TIPS = 15
 
 LEARNINGS_DIR = Path("learnings")
 LEARNINGS_FILE = LEARNINGS_DIR / "survey_learnings.json"
@@ -37,7 +47,6 @@ def load_learnings() -> dict:
         "effective_strategies": [],
         "failed_strategies": [],
         "objection_responses": [],
-        "best_opening_lines": [],
         "topic_difficulty_ranking": {},
         "general_tips": [],
     }
@@ -86,34 +95,44 @@ Conversation transcript:
 Collected data:
 {json.dumps(survey_data, indent=2)}
 
-Analyze this survey and respond with JSON containing:
+Analyze this survey and respond with JSON. IMPORTANT: For each strategy, include an \
+"effectiveness_score" from 1-10 that measures how much impact it had on getting useful \
+data. Be rigorous - a 10 means the strategy directly unlocked critical information, \
+a 1 means it was barely helpful. For failed strategies, score severity 1-10 (10 = caused \
+the person to hang up, 1 = minor awkwardness).
+
 {{
   "completion_rate": {completion_rate},
   "outcome": "success" | "partial" | "refused",
   "effective_strategies": [
-    // List specific phrases or approaches that worked well
-    // e.g. "Asking about utilities right after lot rent created a natural flow"
+    {{
+      "strategy": "description of what worked",
+      "effectiveness_score": 1-10,
+      "context": "brief note on why it worked"
+    }}
   ],
   "failed_strategies": [
-    // Approaches that didn't work or caused friction
-    // e.g. "Asking about rent increases too early made them defensive"
+    {{
+      "strategy": "description of what failed",
+      "severity_score": 1-10,
+      "context": "brief note on why it failed"
+    }}
   ],
   "objection_responses": [
-    // Any objections encountered and how they were handled
     {{
       "objection": "what the person said",
       "response": "how the agent handled it",
-      "effective": true/false
+      "effective": true/false,
+      "effectiveness_score": 1-10
     }}
   ],
-  "best_moments": [
-    // Specific exchanges that went particularly well
-  ],
   "improvement_suggestions": [
-    // Concrete suggestions for next time
+    {{
+      "tip": "concrete suggestion for next time",
+      "priority_score": 1-10
+    }}
   ],
   "topic_order_feedback": {{
-    // For each topic, was the ordering effective?
     "lot_rent": "easy" | "moderate" | "difficult" | "refused",
     "occupancy": "easy" | "moderate" | "difficult" | "refused",
     "utilities": "easy" | "moderate" | "difficult" | "refused",
@@ -142,8 +161,26 @@ Respond with ONLY the JSON."""
     return evaluation
 
 
+def _ranked_insert(existing: list, new_entries: list, max_size: int, score_key: str) -> list:
+    """Insert new entries into a ranked list, keeping only the top N by score.
+
+    New entries compete against existing ones. If a new entry scores higher
+    than the weakest existing entry, it displaces it. If the list isn't full
+    yet, it's added unconditionally.
+    """
+    combined = existing + new_entries
+    # Sort descending by score, so the best are first
+    combined.sort(key=lambda x: x.get(score_key, 0), reverse=True)
+    return combined[:max_size]
+
+
 def update_learnings(learnings: dict, evaluation: dict) -> dict:
-    """Merge a new evaluation into the accumulated learnings."""
+    """Merge a new evaluation into the accumulated learnings.
+
+    Uses competitive ranking: new strategies only survive if they
+    score higher than existing ones. The agent keeps its best
+    learnings across all surveys, not just the most recent.
+    """
     learnings["total_surveys"] += 1
     n = learnings["total_surveys"]
 
@@ -152,24 +189,78 @@ def update_learnings(learnings: dict, evaluation: dict) -> dict:
     new_rate = evaluation.get("completion_rate", 0)
     learnings["avg_completion_rate"] = prev_avg + (new_rate - prev_avg) / n
 
-    # Append effective strategies (keep top 20 most recent)
-    for strategy in evaluation.get("effective_strategies", []):
-        entry = {"strategy": strategy, "from_survey": evaluation.get("property_name")}
-        learnings["effective_strategies"].append(entry)
-    learnings["effective_strategies"] = learnings["effective_strategies"][-20:]
+    survey_context = evaluation.get("property_name", "unknown")
+    survey_completion = evaluation.get("completion_rate", 0)
 
-    # Append failed strategies (keep top 20)
-    for strategy in evaluation.get("failed_strategies", []):
-        entry = {"strategy": strategy, "from_survey": evaluation.get("property_name")}
-        learnings["failed_strategies"].append(entry)
-    learnings["failed_strategies"] = learnings["failed_strategies"][-20:]
+    # --- Effective strategies: ranked by effectiveness_score ---
+    new_effective = []
+    for s in evaluation.get("effective_strategies", []):
+        # Handle both old format (plain string) and new format (dict with score)
+        if isinstance(s, str):
+            entry = {
+                "strategy": s,
+                "effectiveness_score": 5,
+                "from_survey": survey_context,
+                "survey_completion": survey_completion,
+            }
+        else:
+            entry = {
+                "strategy": s.get("strategy", str(s)),
+                "effectiveness_score": s.get("effectiveness_score", 5),
+                "context": s.get("context", ""),
+                "from_survey": survey_context,
+                "survey_completion": survey_completion,
+            }
+        new_effective.append(entry)
 
-    # Append objection responses (keep top 15)
+    learnings["effective_strategies"] = _ranked_insert(
+        learnings["effective_strategies"],
+        new_effective,
+        MAX_EFFECTIVE_STRATEGIES,
+        "effectiveness_score",
+    )
+
+    # --- Failed strategies: ranked by severity_score (worst failures kept) ---
+    new_failed = []
+    for s in evaluation.get("failed_strategies", []):
+        if isinstance(s, str):
+            entry = {
+                "strategy": s,
+                "severity_score": 5,
+                "from_survey": survey_context,
+            }
+        else:
+            entry = {
+                "strategy": s.get("strategy", str(s)),
+                "severity_score": s.get("severity_score", 5),
+                "context": s.get("context", ""),
+                "from_survey": survey_context,
+            }
+        new_failed.append(entry)
+
+    learnings["failed_strategies"] = _ranked_insert(
+        learnings["failed_strategies"],
+        new_failed,
+        MAX_FAILED_STRATEGIES,
+        "severity_score",
+    )
+
+    # --- Objection responses: keep only effective ones, ranked by score ---
+    new_objections = []
     for obj in evaluation.get("objection_responses", []):
-        learnings["objection_responses"].append(obj)
-    learnings["objection_responses"] = learnings["objection_responses"][-15:]
+        if obj.get("effective", False):
+            obj["from_survey"] = survey_context
+            obj.setdefault("effectiveness_score", 5)
+            new_objections.append(obj)
 
-    # Track topic difficulty over time
+    learnings["objection_responses"] = _ranked_insert(
+        learnings["objection_responses"],
+        new_objections,
+        MAX_OBJECTION_RESPONSES,
+        "effectiveness_score",
+    )
+
+    # --- Topic difficulty: running average over time ---
     topic_feedback = evaluation.get("topic_order_feedback", {})
     difficulty_scores = {"easy": 1, "moderate": 2, "difficult": 3, "refused": 4}
     for topic, difficulty in topic_feedback.items():
@@ -183,12 +274,26 @@ def update_learnings(learnings: dict, evaluation: dict) -> dict:
         entry["count"] += 1
         entry["avg"] = entry["total_score"] / entry["count"]
 
-    # Append improvement suggestions as general tips (keep top 15)
+    # --- General tips: ranked by priority_score ---
+    new_tips = []
     for tip in evaluation.get("improvement_suggestions", []):
-        learnings["general_tips"].append(tip)
-    learnings["general_tips"] = learnings["general_tips"][-15:]
+        if isinstance(tip, str):
+            new_tips.append({"tip": tip, "priority_score": 5, "from_survey": survey_context})
+        else:
+            new_tips.append({
+                "tip": tip.get("tip", str(tip)),
+                "priority_score": tip.get("priority_score", 5),
+                "from_survey": survey_context,
+            })
 
-    # Save individual evaluation too
+    learnings["general_tips"] = _ranked_insert(
+        learnings["general_tips"],
+        new_tips,
+        MAX_GENERAL_TIPS,
+        "priority_score",
+    )
+
+    # Save individual evaluation
     eval_dir = LEARNINGS_DIR / "evaluations"
     eval_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -201,7 +306,8 @@ def update_learnings(learnings: dict, evaluation: dict) -> dict:
 def build_learnings_prompt(learnings: dict) -> str:
     """Build a prompt section that injects past learnings into the system prompt.
 
-    This is what makes the agent smarter over time.
+    Strategies are presented in ranked order (best first) so the LLM
+    prioritizes the highest-impact approaches.
     """
     if learnings["total_surveys"] == 0:
         return ""
@@ -212,31 +318,36 @@ def build_learnings_prompt(learnings: dict) -> str:
         f"\nAverage data completion rate: {learnings['avg_completion_rate']:.0%}"
     )
 
-    # What works
+    # Top effective strategies (already sorted by score, show top 8)
     if learnings["effective_strategies"]:
-        strategies = [s["strategy"] for s in learnings["effective_strategies"][-8:]]
+        top = learnings["effective_strategies"][:8]
+        lines = []
+        for s in top:
+            score = s.get("effectiveness_score", "?")
+            lines.append(f"- [{score}/10] {s['strategy']}")
         sections.append(
-            "\nStrategies that have worked well:\n"
-            + "\n".join(f"- {s}" for s in strategies)
+            "\nProven strategies (ranked by effectiveness):\n" + "\n".join(lines)
         )
 
-    # What to avoid
+    # Top failures to avoid (already sorted by severity, show top 5)
     if learnings["failed_strategies"]:
-        fails = [s["strategy"] for s in learnings["failed_strategies"][-5:]]
+        top = learnings["failed_strategies"][:5]
+        lines = []
+        for s in top:
+            score = s.get("severity_score", "?")
+            lines.append(f"- [severity {score}/10] {s['strategy']}")
         sections.append(
-            "\nApproaches to AVOID (these caused problems):\n"
-            + "\n".join(f"- {s}" for s in fails)
+            "\nApproaches to AVOID (ranked by how badly they backfired):\n"
+            + "\n".join(lines)
         )
 
-    # Objection handling
-    effective_objections = [
-        o for o in learnings["objection_responses"] if o.get("effective")
-    ]
-    if effective_objections:
-        sections.append("\nSuccessful objection handling examples:")
-        for o in effective_objections[-5:]:
+    # Best objection responses (already sorted by score)
+    if learnings["objection_responses"]:
+        sections.append("\nBest objection handling responses (ranked):")
+        for o in learnings["objection_responses"][:5]:
+            score = o.get("effectiveness_score", "?")
             sections.append(
-                f'- When they said: "{o["objection"]}" '
+                f'- [{score}/10] When they said: "{o["objection"]}" '
                 f'-> Respond with: "{o["response"]}"'
             )
 
@@ -252,12 +363,17 @@ def build_learnings_prompt(learnings: dict) -> str:
             + " -> ".join(easy_first)
         )
 
-    # General tips
+    # Top tips (already sorted by priority)
     if learnings["general_tips"]:
-        tips = learnings["general_tips"][-5:]
+        top = learnings["general_tips"][:5]
+        lines = []
+        for t in top:
+            tip_text = t.get("tip", t) if isinstance(t, dict) else t
+            score = t.get("priority_score", "?") if isinstance(t, dict) else "?"
+            lines.append(f"- [{score}/10] {tip_text}")
         sections.append(
-            "\nTips from past experience:\n"
-            + "\n".join(f"- {t}" for t in tips)
+            "\nTop tips from past experience (ranked by priority):\n"
+            + "\n".join(lines)
         )
 
     return "\n".join(sections)
@@ -272,14 +388,17 @@ def print_learnings_summary(learnings: dict):
     print(f"Average completion rate: {learnings['avg_completion_rate']:.0%}")
 
     if learnings["effective_strategies"]:
-        print("\nTop effective strategies:")
-        for s in learnings["effective_strategies"][-5:]:
-            print(f"  + {s['strategy']}")
+        print(f"\nTop effective strategies ({len(learnings['effective_strategies'])} stored):")
+        for s in learnings["effective_strategies"][:10]:
+            score = s.get("effectiveness_score", "?")
+            source = s.get("from_survey", "?")
+            print(f"  [{score}/10] {s['strategy']}  (from: {source})")
 
     if learnings["failed_strategies"]:
-        print("\nStrategies to avoid:")
-        for s in learnings["failed_strategies"][-5:]:
-            print(f"  - {s['strategy']}")
+        print(f"\nStrategies to avoid ({len(learnings['failed_strategies'])} stored):")
+        for s in learnings["failed_strategies"][:10]:
+            score = s.get("severity_score", "?")
+            print(f"  [severity {score}/10] {s['strategy']}")
 
     if learnings["topic_difficulty_ranking"]:
         print("\nTopic difficulty (1=easy, 4=refused):")
@@ -290,9 +409,25 @@ def print_learnings_summary(learnings: dict):
         for topic, data in ranked:
             print(f"  {topic}: {data['avg']:.1f} (n={data['count']})")
 
+    if learnings["objection_responses"]:
+        print(f"\nBest objection responses ({len(learnings['objection_responses'])} stored):")
+        for o in learnings["objection_responses"][:5]:
+            score = o.get("effectiveness_score", "?")
+            print(f'  [{score}/10] "{o["objection"]}" -> "{o["response"]}"')
+
     if learnings["general_tips"]:
-        print("\nRecent tips:")
-        for tip in learnings["general_tips"][-5:]:
-            print(f"  * {tip}")
+        print(f"\nTop tips ({len(learnings['general_tips'])} stored):")
+        for tip in learnings["general_tips"][:5]:
+            if isinstance(tip, dict):
+                score = tip.get("priority_score", "?")
+                print(f"  [{score}/10] {tip.get('tip', tip)}")
+            else:
+                print(f"  * {tip}")
+
+    # Show the score threshold to beat
+    if learnings["effective_strategies"]:
+        weakest = learnings["effective_strategies"][-1]
+        print(f"\nMin score to enter top strategies: "
+              f"{weakest.get('effectiveness_score', '?')}/10")
 
     print("=" * 60)
