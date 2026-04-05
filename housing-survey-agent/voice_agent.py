@@ -19,6 +19,14 @@ from dotenv import load_dotenv
 from mistralai import Mistral
 
 from survey_config import SYSTEM_PROMPT, SURVEY_QUESTIONS, PropertySurveyData
+from learning import (
+    load_learnings,
+    save_learnings,
+    evaluate_survey,
+    update_learnings,
+    build_learnings_prompt,
+    print_learnings_summary,
+)
 
 load_dotenv()
 
@@ -36,6 +44,10 @@ class HousingSurveyAgent:
         self.conversation_history: list[dict] = []
         self.survey_data = PropertySurveyData()
         self.current_question_index = 0
+
+        # Learning system
+        self.learnings = load_learnings()
+        self.learnings_prompt = build_learnings_prompt(self.learnings)
 
         # Output directories
         self.output_dir = Path("surveys_output")
@@ -97,7 +109,7 @@ class HousingSurveyAgent:
         )
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT + context},
+            {"role": "system", "content": SYSTEM_PROMPT + self.learnings_prompt + context},
             *self.conversation_history,
         ]
 
@@ -229,10 +241,11 @@ Respond with ONLY valid JSON matching the schema above."""
             # Advance question index based on covered topics
             self._advance_question_index()
 
-        # Extract and save results
+        # Extract, evaluate, learn, and save
         print("\nExtracting survey data...")
         self.extract_survey_data()
         self.save_survey_results(property_name)
+        self._learn_from_survey(property_name)
         self._print_summary()
 
     def run_voice(self, property_name: str | None = None):
@@ -318,11 +331,35 @@ Respond with ONLY valid JSON matching the schema above."""
 
             self._advance_question_index()
 
-        # Extract and save
+        # Extract, evaluate, learn, and save
         print("\nExtracting survey data...")
         self.extract_survey_data()
         self.save_survey_results(property_name)
+        self._learn_from_survey(property_name)
         self._print_summary()
+
+    def _learn_from_survey(self, property_name: str | None = None):
+        """Evaluate the survey and update learnings for future improvement."""
+        print("\nEvaluating survey performance...")
+        evaluation = evaluate_survey(
+            self.client,
+            self.conversation_history,
+            self.survey_data.model_dump(),
+            property_name,
+        )
+
+        outcome = evaluation.get("outcome", "unknown")
+        rate = evaluation.get("completion_rate", 0)
+        print(f"  Outcome: {outcome} | Completion: {rate:.0%}")
+
+        if evaluation.get("improvement_suggestions"):
+            print("  Suggestions for next time:")
+            for tip in evaluation["improvement_suggestions"][:3]:
+                print(f"    -> {tip}")
+
+        self.learnings = update_learnings(self.learnings, evaluation)
+        save_learnings(self.learnings)
+        print(f"  Learnings updated ({self.learnings['total_surveys']} surveys total)")
 
     def _speak(self, text: str):
         """Synthesize and play speech."""
@@ -375,7 +412,17 @@ def main():
         help="Enable voice mode (requires microphone/speakers)",
     )
     parser.add_argument("--voice-id", help="Mistral voice ID for TTS")
+    parser.add_argument(
+        "--learnings",
+        action="store_true",
+        help="Show what the agent has learned from past surveys",
+    )
     args = parser.parse_args()
+
+    if args.learnings:
+        learnings = load_learnings()
+        print_learnings_summary(learnings)
+        return
 
     agent = HousingSurveyAgent(voice_id=args.voice_id)
 
