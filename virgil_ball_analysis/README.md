@@ -1,4 +1,4 @@
-# Reelplay
+# Virgil Ball Analysis
 
 An MVP web app that analyzes a recording of a basketball game and produces a
 coaching report for the team and individual players.
@@ -61,7 +61,7 @@ written coaching notes.
 ## Quick start
 
 ```bash
-cd reelplay
+cd virgil_ball_analysis
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -138,7 +138,7 @@ This is an MVP, not a broadcast-grade analytics product. Specifically:
 ## Project layout
 
 ```
-reelplay/
+virgil_ball_analysis/
   app.py                  # Streamlit entry point
   analyzer/
     __init__.py

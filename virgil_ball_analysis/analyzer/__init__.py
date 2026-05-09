@@ -1,4 +1,4 @@
-"""Reelplay — basketball game analyzer package."""
+"""Virgil Ball Analysis — basketball game analyzer package."""
 
 __all__ = [
     "config",
