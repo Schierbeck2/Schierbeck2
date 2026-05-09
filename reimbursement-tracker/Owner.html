@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Shared'); ?>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reimbursement Dashboard</h1>
+  <div class="muted" id="who"></div>
+
+  <div id="balance"></div>
+
+  <h2>Hours by owner</h2>
+  <div class="grid" id="totals"></div>
+
+  <h2>Projects</h2>
+  <div id="projects"></div>
+  <details>
+    <summary class="muted">Add a project</summary>
+    <div class="card row">
+      <input id="np-name" placeholder="Project name" />
+      <select id="np-owner">
+        <option value="You">You</option>
+        <option value="Coworker">Coworker</option>
+      </select>
+      <button class="primary" onclick="addProj()">Add</button>
+    </div>
+  </details>
+
+  <h2>Payments received</h2>
+  <div id="payments"></div>
+  <details>
+    <summary class="muted">Record a payment</summary>
+    <div class="card row">
+      <input id="pay-date" type="date" />
+      <input id="pay-amt" type="number" step="0.01" placeholder="Amount" />
+      <input id="pay-note" placeholder="Note (optional)" />
+      <button class="primary" onclick="addPay()">Save</button>
+    </div>
+  </details>
+
+  <h2>Recent entries</h2>
+  <div id="recent"></div>
+</div>
+
+<script>
+  let data = null;
+
+  async function load() {
+    data = await call('ownerDashboard');
+    document.getElementById('who').textContent = `Hourly rate: ${fmtMoney(data.rate)} • Coworker: ${data.coworkerName}`;
+    renderBalance();
+    renderTotals();
+    renderProjects();
+    renderPayments();
+    renderRecent();
+    document.getElementById('pay-date').value = new Date().toISOString().slice(0, 10);
+  }
+
+  function renderBalance() {
+    const el = document.getElementById('balance');
+    el.innerHTML = `
+      <div class="card">
+        <div class="row between">
+          <div class="stat">
+            <span class="muted">${escapeHtml(data.coworkerName)} owes</span>
+            <span class="big">${fmtMoney(data.balance)}</span>
+          </div>
+          <div class="stat" style="text-align:right">
+            <span class="muted">Billed ${fmtMoney(data.billed)} • Paid ${fmtMoney(data.paid)}</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderTotals() {
+    const el = document.getElementById('totals');
+    const periods = [['week','This week'],['month','This month'],['year','YTD'],['all','All time']];
+    el.innerHTML = periods.map(([k, label]) => `
+      <div class="card">
+        <div class="muted">${label}</div>
+        <div>You: <b>${fmtHours(data.totals[k].You)}</b></div>
+        <div>${escapeHtml(data.coworkerName)}: <b>${fmtHours(data.totals[k].Coworker)}</b></div>
+      </div>
+    `).join('');
+  }
+
+  function renderProjects() {
+    const el = document.getElementById('projects');
+    if (!data.projects.length) { el.innerHTML = '<div class="muted">None yet.</div>'; return; }
+    el.innerHTML = `
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr><th>Name</th><th>Owner</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            ${data.projects.map(p => `
+              <tr>
+                <td>${escapeHtml(p.name)}</td>
+                <td>${ownerLabel(p.owner)}</td>
+                <td>${escapeHtml(p.status)}</td>
+                <td style="text-align:right">
+                  ${p.status !== 'archived' ? `<button onclick="archiveProj('${p.id}')">Archive</button>` : ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderPayments() {
+    const el = document.getElementById('payments');
+    if (!data.payments.length) { el.innerHTML = '<div class="muted">No payments recorded.</div>'; return; }
+    el.innerHTML = `
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr><th>Date</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+          <tbody>
+            ${data.payments.map(p => `
+              <tr>
+                <td>${new Date(p.date).toLocaleDateString()}</td>
+                <td>${fmtMoney(p.amount)}</td>
+                <td>${escapeHtml(p.note || '')}</td>
+                <td style="text-align:right"><button class="danger" onclick="delPay('${p.id}')">Delete</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderRecent() {
+    const el = document.getElementById('recent');
+    if (!data.recent.length) { el.innerHTML = '<div class="muted">No entries.</div>'; return; }
+    el.innerHTML = `
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr><th>When</th><th>Project</th><th>Owner</th><th>Hours</th><th>Note</th></tr></thead>
+          <tbody>
+            ${data.recent.map(e => `
+              <tr>
+                <td>${fmtDate(e.clockIn)}</td>
+                <td>${escapeHtml(e.projectName)}</td>
+                <td>${ownerLabel(e.owner)}</td>
+                <td>${e.hours.toFixed(2)}</td>
+                <td class="muted">${escapeHtml(e.notes || '')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  async function addProj() {
+    const name = document.getElementById('np-name').value.trim();
+    const owner = document.getElementById('np-owner').value;
+    if (!name) return;
+    await call('addProject', [name, owner]);
+    document.getElementById('np-name').value = '';
+    load();
+  }
+
+  async function archiveProj(id) {
+    if (!confirm('Archive this project?')) return;
+    await call('archiveProject', [id]);
+    load();
+  }
+
+  async function addPay() {
+    const date = document.getElementById('pay-date').value;
+    const amt = document.getElementById('pay-amt').value;
+    const note = document.getElementById('pay-note').value;
+    if (!date || !amt) { toast('Date and amount required'); return; }
+    data = await call('addPayment', [date, amt, note]);
+    document.getElementById('pay-amt').value = '';
+    document.getElementById('pay-note').value = '';
+    renderBalance(); renderPayments();
+  }
+
+  async function delPay(id) {
+    if (!confirm('Delete this payment?')) return;
+    data = await call('deletePayment', [id]);
+    renderBalance(); renderPayments();
+  }
+
+  function ownerLabel(o) {
+    return o === 'Coworker' ? '<span class="pill cw">Coworker</span>' : '<span class="pill you">You</span>';
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  load();
+</script>
+</body>
+</html>

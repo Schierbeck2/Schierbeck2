@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Shared'); ?>
+</head>
+<body>
+<div class="wrap">
+  <h1>Time Tracker</h1>
+  <div class="muted" id="who"></div>
+
+  <div id="current"></div>
+
+  <h2>Projects</h2>
+  <div id="projects"></div>
+
+  <h2>Recent entries</h2>
+  <div id="recent"></div>
+</div>
+
+<script>
+  let state = null;
+  let tickHandle = null;
+
+  async function load() {
+    state = await call('assistantState');
+    document.getElementById('who').textContent = state.email ? `Signed in as ${state.email}` : '';
+    renderCurrent();
+    renderProjects();
+    renderRecent();
+  }
+
+  function renderCurrent() {
+    const el = document.getElementById('current');
+    if (!state.current) {
+      el.innerHTML = '<div class="card muted">Not clocked in. Pick a project below to start.</div>';
+      if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+      return;
+    }
+    const c = state.current;
+    el.innerHTML = `
+      <div class="card running">
+        <div class="row between">
+          <div>
+            <div class="muted">Currently working on</div>
+            <div style="font-size:1.2rem;font-weight:600">${escapeHtml(c.projectName)}</div>
+            <div class="muted">since ${fmtDate(c.clockIn)}</div>
+          </div>
+          <div class="stat" style="text-align:right">
+            <div class="muted">Elapsed</div>
+            <div class="big timer" id="elapsed">0:00:00</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input id="notes" placeholder="Optional note about this session" />
+          <button class="primary" onclick="doClockOut()">Clock out</button>
+        </div>
+      </div>`;
+    if (tickHandle) clearInterval(tickHandle);
+    tickHandle = setInterval(() => {
+      const start = new Date(c.clockIn).getTime();
+      const ms = Date.now() - start;
+      const h = Math.floor(ms / 3.6e6);
+      const m = Math.floor((ms % 3.6e6) / 6e4);
+      const s = Math.floor((ms % 6e4) / 1000);
+      const el2 = document.getElementById('elapsed');
+      if (el2) el2.textContent = `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }, 1000);
+  }
+
+  function renderProjects() {
+    const el = document.getElementById('projects');
+    if (!state.projects.length) {
+      el.innerHTML = '<div class="card muted">No projects yet. Ask Chuck to add one.</div>';
+      return;
+    }
+    el.innerHTML = state.projects.map(p => `
+      <div class="card row between">
+        <div>
+          <div style="font-weight:500">${escapeHtml(p.name)}</div>
+          <div class="muted">${ownerLabel(p.owner)}</div>
+        </div>
+        <button onclick="doClockIn('${p.id}')" ${state.current && state.current.projectId === p.id ? 'disabled' : ''}>
+          ${state.current && state.current.projectId === p.id ? 'Working...' : 'Clock in'}
+        </button>
+      </div>
+    `).join('');
+  }
+
+  function renderRecent() {
+    const el = document.getElementById('recent');
+    if (!state.recent.length) { el.innerHTML = '<div class="muted">No completed entries yet.</div>'; return; }
+    el.innerHTML = `
+      <div class="card" style="padding:0">
+        <table>
+          <thead><tr><th>Project</th><th>Start</th><th>End</th><th>Hours</th><th></th></tr></thead>
+          <tbody>
+            ${state.recent.map(e => `
+              <tr id="row-${e.id}">
+                <td>${escapeHtml(e.projectName)}</td>
+                <td>${fmtDate(e.clockIn)}</td>
+                <td>${fmtDate(e.clockOut)}</td>
+                <td>${e.hours.toFixed(2)}</td>
+                <td style="text-align:right">
+                  <button onclick="editEntry('${e.id}')">Edit</button>
+                  <button class="danger" onclick="removeEntry('${e.id}')">Delete</button>
+                </td>
+              </tr>
+              ${e.notes ? `<tr><td colspan="5" class="muted" style="padding-top:0">"${escapeHtml(e.notes)}"</td></tr>` : ''}
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  async function doClockIn(projectId) {
+    state = await call('clockIn', [projectId]);
+    toast('Clocked in');
+    renderCurrent(); renderProjects(); renderRecent();
+  }
+
+  async function doClockOut() {
+    const notes = document.getElementById('notes').value;
+    state = await call('clockOut', [notes]);
+    toast('Clocked out');
+    renderCurrent(); renderProjects(); renderRecent();
+  }
+
+  async function removeEntry(id) {
+    if (!confirm('Delete this entry?')) return;
+    state = await call('deleteEntry', [id]);
+    renderRecent();
+  }
+
+  function editEntry(id) {
+    const e = state.recent.find(x => x.id === id);
+    if (!e) return;
+    const row = document.getElementById('row-' + id);
+    const opts = state.projects.map(p =>
+      `<option value="${p.id}" ${p.id === e.projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+    row.innerHTML = `
+      <td><select id="ed-proj">${opts}</select></td>
+      <td><input id="ed-in" type="datetime-local" value="${toLocalInput(e.clockIn)}" /></td>
+      <td><input id="ed-out" type="datetime-local" value="${toLocalInput(e.clockOut)}" /></td>
+      <td></td>
+      <td style="text-align:right">
+        <button class="primary" onclick="saveEntry('${id}')">Save</button>
+        <button onclick="renderRecent()">Cancel</button>
+      </td>`;
+  }
+
+  async function saveEntry(id) {
+    const payload = {
+      projectId: document.getElementById('ed-proj').value,
+      clockIn: new Date(document.getElementById('ed-in').value).toISOString(),
+      clockOut: new Date(document.getElementById('ed-out').value).toISOString(),
+    };
+    state = await call('updateEntry', [id, payload]);
+    toast('Saved');
+    renderRecent();
+  }
+
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function ownerLabel(o) {
+    return o === 'Coworker' ? '<span class="pill cw">Coworker</span>' : '<span class="pill you">You</span>';
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  load();
+</script>
+</body>
+</html>
