@@ -89,7 +89,8 @@ def _build_user_blocks(
         "instructions": (
             "Write a coaching report for this team and each named player. "
             "Be specific. Reference shot zones, makes/misses, on-court time, "
-            "possession time, offensive vs defensive rebounding, and any "
+            "possession time, offensive vs defensive rebounding, half-court "
+            "vs transition possessions, attacking-rim direction, and any "
             "clear pose-form patterns. Match the schema exactly."
         ),
         "schema": schema,
@@ -97,7 +98,7 @@ def _build_user_blocks(
         "player_stats": player_stats,
         "shot_events": shot_events,
         "form_metrics": form_metrics,
-        "possessions_summary": _summarize_possessions(possessions),
+        "possessions_summary": _summarize_possessions(possessions, team_stats),
         "rebounds": rebounds,
     }
     blocks: list[dict] = [{"type": "text", "text": json.dumps(payload, indent=2)}]
@@ -190,7 +191,9 @@ def _parse(text: str) -> CoachOutput:
     )
 
 
-def _summarize_possessions(possessions: list[dict]) -> dict:
+def _summarize_possessions(
+    possessions: list[dict], team_stats: list[dict] | None = None,
+) -> dict:
     if not possessions:
         return {"count": 0}
     durations = [p.get("duration_s", 0.0) for p in possessions]
@@ -200,12 +203,24 @@ def _summarize_possessions(possessions: list[dict]) -> dict:
         if t is None:
             continue
         by_team[t] = by_team.get(t, 0) + 1
-    return {
+    summary = {
         "count": len(possessions),
         "avg_duration_s": sum(durations) / max(1, len(durations)),
         "median_duration_s": sorted(durations)[len(durations) // 2] if durations else 0,
         "by_team": by_team,
     }
+    if team_stats:
+        summary["per_team_breakdown"] = [
+            {
+                "team": ts.get("team_id"),
+                "attacking_rim": ts.get("attacking_rim"),
+                "half_court_possessions": ts.get("half_court_possessions"),
+                "transition_possessions": ts.get("transition_possessions"),
+                "wrong_rim_shots": ts.get("wrong_rim_shots"),
+            }
+            for ts in team_stats
+        ]
+    return summary
 
 
 def _offline_fallback(

@@ -23,6 +23,14 @@ Given a video of a game (single fixed-ish camera view works best) you get:
   missed shot.
 - **Jersey-number OCR** — best-effort reading of each player's number so
   reports say "Team A #7" instead of "Player #4".
+- **Basket-side detection** — once both rims are calibrated, each shot and
+  possession is tagged with a left/right rim, the team's attacking rim is
+  inferred from their shot distribution, and possessions are classified
+  half-court vs transition.
+- **Manual overrides + cheap re-runs** — the heavy CV pass (tracking, OCR,
+  pose) is cached in-session, so you can fix wrong jersey numbers or team
+  assignments and re-run only the cheap analytics (shots, possessions,
+  rebounds, stats, coach) without re-tracking.
 - **Highlight clips** — auto-cut short clips around detected shot events.
 
 Everything runs locally. The only external service is the Claude API for the
@@ -44,11 +52,19 @@ Open the URL Streamlit prints (usually <http://localhost:8501>).
 ## Workflow in the app
 
 1. **Upload** a game video (`mp4`, `mov`, `avi`).
-2. **Calibrate the court** — click 4 known points on a frame (the four corners
-   of the half-court you want to analyze). This is used for the shot chart.
+2. **Calibrate the court** —
+   - Click 4 known points on a frame (the four corners of the half-court
+     you want to analyze). This drives the shot chart.
+   - Click the **two rim positions** (left and right basket). This drives
+     attacking-rim detection and the half-court vs transition split.
 3. **Run analysis** — the tracker will run on the video. The first run
    downloads the YOLOv8n weights (~6 MB).
-4. **Review** the team report, per-player tabs, shot chart, and highlight clips.
+4. **Review** the team report, players, shot chart, possessions, and
+   highlight clips.
+5. **Optional — fix mistakes**: if the auto team clustering came out
+   backwards or some jersey numbers are wrong, edit the override table
+   in *Step 3b* and click **Re-run rollups**. Tracking and OCR are reused
+   from the first pass, so this is much faster than re-running from scratch.
 
 ## Why a hybrid approach?
 
@@ -71,7 +87,13 @@ This is an MVP, not a broadcast-grade analytics product. Specifically:
 - Possession is inferred from ball-to-player proximity. Rapid passes inside
   a tight cluster of players will sometimes assign the wrong owner.
 - Rebound classification (OREB vs DREB) depends on team-color clustering
-  being right, which can fail with similar uniforms.
+  being right, which can fail with similar uniforms. If you see weird
+  results, use the override table in *Step 3b* (the "flip teams" toggle is
+  the fastest fix when the two clusters are simply swapped).
+- Basket-side detection assumes a roughly fixed camera position. Heavy
+  panning or sideline-to-sideline switches will move the rim positions
+  away from where they were calibrated and degrade the half-court vs
+  transition split.
 - Best with a fixed camera. Heavy zooms / cuts / multi-cam broadcast feeds
   will degrade tracking.
 - A single CPU is fine for short clips (<2 min); for full-game video a CUDA

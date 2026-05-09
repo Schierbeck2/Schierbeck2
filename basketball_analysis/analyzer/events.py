@@ -22,7 +22,7 @@ from typing import Optional
 
 import numpy as np
 
-from .court import CourtCalibration
+from .court import BasketCalibration, CourtCalibration
 from .tracker import Detection, split_by_class
 
 
@@ -43,6 +43,7 @@ class ShotEvent:
     distance_ft: Optional[float]
     made: Optional[bool]
     confidence: float  # in [0, 1], heuristic
+    attacking_rim: Optional[str] = None  # "left" | "right" | None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -75,6 +76,7 @@ def detect_shots(
     calib: Optional[CourtCalibration],
     teams: dict[int, int] | None = None,
     fps: float = 30.0,
+    basket_calib: Optional[BasketCalibration] = None,
 ) -> list[ShotEvent]:
     """Find candidate shot events from ball trajectory.
 
@@ -137,6 +139,12 @@ def detect_shots(
 
                 made = _heuristic_made(track, i, end)
 
+                attacking_rim: Optional[str] = None
+                if basket_calib is not None:
+                    apex_x = float(xs[i])
+                    apex_y = float(ys[i])
+                    attacking_rim = basket_calib.which_rim_for_point(apex_x, apex_y)
+
                 events.append(
                     ShotEvent(
                         start_frame=int(frames[start]),
@@ -154,6 +162,7 @@ def detect_shots(
                         distance_ft=dist_ft,
                         made=made,
                         confidence=min(1.0, (up_amp + down_amp) / 400.0),
+                        attacking_rim=attacking_rim,
                     )
                 )
                 i = end + 1

@@ -60,6 +60,10 @@ class TeamStats:
     possession_time_s: float = 0.0
     offensive_rebounds: int = 0
     defensive_rebounds: int = 0
+    attacking_rim: Optional[str] = None  # "left" | "right" | None
+    half_court_possessions: int = 0
+    transition_possessions: int = 0
+    wrong_rim_shots: int = 0  # debug signal: shots aimed at the OTHER team's rim
 
     @property
     def fg_pct(self) -> Optional[float]:
@@ -178,5 +182,46 @@ def aggregate(
             tzb = ts.shots_by_zone[zone]
             tzb["att"] += zb["att"]
             tzb["make"] += zb["make"]
+
+    # Per-team attacking rim: majority of that team's shots' attacking_rim.
+    rim_votes: dict[int, dict[str, int]] = defaultdict(lambda: {"left": 0, "right": 0})
+    for s in shots:
+        if s.shooter_team is None or s.attacking_rim not in ("left", "right"):
+            continue
+        rim_votes[s.shooter_team][s.attacking_rim] += 1
+    for team_id, votes in rim_votes.items():
+        if team_id not in by_team:
+            continue
+        if votes["left"] == 0 and votes["right"] == 0:
+            continue
+        by_team[team_id].attacking_rim = (
+            "left" if votes["left"] >= votes["right"] else "right"
+        )
+
+    # Wrong-rim shots = shots whose attacking_rim disagrees with the team's
+    # majority. Useful as a sanity check on team-color clustering.
+    for s in shots:
+        if s.shooter_team is None or s.attacking_rim is None:
+            continue
+        ts = by_team.get(s.shooter_team)
+        if ts is None or ts.attacking_rim is None:
+            continue
+        if s.attacking_rim != ts.attacking_rim:
+            ts.wrong_rim_shots += 1
+
+    # Half-court vs transition: a possession is "half-court" if it both
+    # starts and ends on the team's attacking rim's half. If it starts on
+    # the opposite half and ends on the attacking half, it's "transition".
+    for p in possessions:
+        if p.team is None:
+            continue
+        ts = by_team.get(p.team)
+        if ts is None or ts.attacking_rim is None:
+            continue
+        attacking = ts.attacking_rim
+        if p.start_rim == attacking and p.end_rim == attacking:
+            ts.half_court_possessions += 1
+        elif p.start_rim and p.end_rim and p.start_rim != attacking and p.end_rim == attacking:
+            ts.transition_possessions += 1
 
     return players, by_team

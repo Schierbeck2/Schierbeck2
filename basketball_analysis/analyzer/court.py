@@ -1,4 +1,6 @@
-"""Map image-space points onto a half-court coordinate system.
+"""Map image-space points onto a half-court coordinate system, plus a
+two-rim image-space calibration so we can tell which basket each team is
+attacking.
 
 The user clicks 4 known points on a frame; we treat those as the 4 corners of
 the half court (in this order, looking at the half from sideline view):
@@ -24,6 +26,28 @@ import numpy as np
 HALF_COURT_W_FT = 50.0   # sideline to sideline
 HALF_COURT_L_FT = 47.0   # baseline to half-court
 RIM_FROM_BASELINE_FT = 5.25  # rim center is ~5'3" from baseline
+
+
+@dataclass
+class BasketCalibration:
+    """Image-space pixel positions of the two rims (left and right basket).
+
+    Used to ask "which basket is this shot/possession aimed at?" by image-x
+    proximity. This is independent of the half-court homography — it works
+    even when the camera shows the whole floor.
+    """
+
+    left_rim_xy: tuple[float, float]
+    right_rim_xy: tuple[float, float]
+
+    def which_rim_for_x(self, image_x: float) -> str:
+        midpoint = (self.left_rim_xy[0] + self.right_rim_xy[0]) / 2.0
+        return "left" if image_x < midpoint else "right"
+
+    def which_rim_for_point(self, image_x: float, image_y: float) -> str:
+        dl = (image_x - self.left_rim_xy[0]) ** 2 + (image_y - self.left_rim_xy[1]) ** 2
+        dr = (image_x - self.right_rim_xy[0]) ** 2 + (image_y - self.right_rim_xy[1]) ** 2
+        return "left" if dl < dr else "right"
 
 
 @dataclass

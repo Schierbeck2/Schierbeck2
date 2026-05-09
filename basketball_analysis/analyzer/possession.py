@@ -28,6 +28,7 @@ from typing import Optional
 
 import numpy as np
 
+from .court import BasketCalibration
 from .events import ShotEvent
 from .tracker import Detection, detections_by_frame, split_by_class
 
@@ -41,6 +42,8 @@ class Possession:
     track_id: Optional[int]
     team: Optional[int]
     n_frames: int
+    start_rim: Optional[str] = None  # "left" | "right" | None
+    end_rim: Optional[str] = None
 
     @property
     def duration_s(self) -> float:
@@ -100,18 +103,38 @@ def per_frame_owner(
     return owners
 
 
+def ball_xy_per_frame(detections: list[Detection]) -> dict[int, tuple[float, float]]:
+    """Return {frame: (cx, cy)} for the highest-confidence ball detection."""
+    by_frame = detections_by_frame(detections)
+    out: dict[int, tuple[float, float]] = {}
+    for frame, dets in by_frame.items():
+        balls = [d for d in dets if d.cls == "ball"]
+        if not balls:
+            continue
+        ball = max(balls, key=lambda b: b.conf)
+        out[frame] = (ball.cx, ball.cy)
+    return out
+
+
 def compute_possessions(
     owner_per_frame: dict[int, Optional[int]],
     teams: dict[int, int],
     fps: float,
     min_run_frames: int = 4,
     bridge_gap_frames: int = 6,
+    basket_calib: Optional[BasketCalibration] = None,
+    ball_xy: Optional[dict[int, tuple[float, float]]] = None,
 ) -> list[Possession]:
     """Coalesce per-frame ownership into Possession blocks.
 
     `min_run_frames` filters jitter; `bridge_gap_frames` lets short None
     stretches (e.g. a dribble where the ball detection drops) keep the
     same owner instead of cutting the possession.
+
+    If `basket_calib` and `ball_xy` are provided, each possession is tagged
+    with the rim ("left" / "right") nearest the ball at the start and end
+    of the possession. This is what lets us classify half-court vs
+    transition possessions downstream.
     """
     if not owner_per_frame:
         return []
@@ -143,6 +166,14 @@ def compute_possessions(
             continue
         if (end - start + 1) < min_run_frames:
             continue
+        start_rim = end_rim = None
+        if basket_calib is not None and ball_xy:
+            sxy = _nearest_ball_xy(ball_xy, start)
+            exy = _nearest_ball_xy(ball_xy, end)
+            if sxy is not None:
+                start_rim = basket_calib.which_rim_for_x(sxy[0])
+            if exy is not None:
+                end_rim = basket_calib.which_rim_for_x(exy[0])
         out.append(
             Possession(
                 start_frame=start,
@@ -152,9 +183,25 @@ def compute_possessions(
                 track_id=owner,
                 team=teams.get(owner),
                 n_frames=end - start + 1,
+                start_rim=start_rim,
+                end_rim=end_rim,
             )
         )
     return out
+
+
+def _nearest_ball_xy(
+    ball_xy: dict[int, tuple[float, float]], frame: int, max_gap: int = 10,
+) -> Optional[tuple[float, float]]:
+    """Return ball xy at `frame` or the nearest frame within `max_gap`."""
+    if frame in ball_xy:
+        return ball_xy[frame]
+    for delta in range(1, max_gap + 1):
+        if (frame - delta) in ball_xy:
+            return ball_xy[frame - delta]
+        if (frame + delta) in ball_xy:
+            return ball_xy[frame + delta]
+    return None
 
 
 def detect_rebounds(
