@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/uploads/*
+data/outputs/*
+data/clips/*
+data/cache/*
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+!data/clips/.gitkeep
+!data/cache/.gitkeep
+*.pt
+*.onnx
+.DS_Store
