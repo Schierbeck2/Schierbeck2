@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from analyzer import persistence
 from analyzer.config import OUTPUT_DIR, SETTINGS, UPLOAD_DIR
 from analyzer.court import BasketCalibration, calibrate
 from analyzer.events import ShotEvent
@@ -44,6 +45,79 @@ ss.setdefault("heavy_cache", None)
 ss.setdefault("override_editor_df", None)
 
 
+def _persist_current_session() -> None:
+    """Save the current session bundle to disk (best-effort)."""
+    if not ss.video_path or ss.heavy_cache is None:
+        return
+    try:
+        persistence.save_session(
+            video_path=ss.video_path,
+            heavy_cache=ss.heavy_cache,
+            court_calibration=ss.calibration,
+            basket_calibration=ss.basket_calibration,
+            calibration_points=ss.calibration_points,
+            rim_points=ss.rim_points,
+            result=ss.result,
+        )
+    except Exception as e:
+        st.warning(f"Could not save session: {e}")
+
+
+def _load_session_into_state(name: str) -> None:
+    bundle = persistence.load_session(name)
+    ss.video_path = bundle["meta"].get("video_path") or ss.video_path
+    ss.heavy_cache = bundle["heavy_cache"]
+    ss.calibration = bundle["court_calibration"]
+    ss.basket_calibration = bundle["basket_calibration"]
+    ss.calibration_points = bundle["calibration_points"]
+    ss.rim_points = bundle["rim_points"] or [(0, 0), (0, 0)]
+    ss.result = bundle["result"]
+    ss.override_editor_df = None
+
+
+# ---------- sidebar: saved sessions ----------
+with st.sidebar:
+    st.header("Saved sessions")
+    sessions = persistence.list_sessions()
+    if not sessions:
+        st.caption("No saved sessions yet. Upload a video and run an analysis to create one.")
+    else:
+        labels = []
+        for s in sessions:
+            ts = s.get("saved_at")
+            when = ""
+            if ts:
+                from datetime import datetime
+                when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+            labels.append(
+                f"{s['name']} — {s.get('n_shots', 0)} shots · {when}"
+            )
+        choice = st.selectbox(
+            "Pick one to load",
+            options=list(range(len(sessions))),
+            format_func=lambda i: labels[i],
+            key="saved_session_choice",
+        )
+        sel = sessions[choice]
+        if not sel.get("video_exists", True):
+            st.caption(
+                f"⚠️ Original video not found at `{sel.get('video_path')}`. "
+                "Tracker results will still load; highlight clips may be missing."
+            )
+        col_a, col_b = st.columns(2)
+        if col_a.button("Load", key="btn_load_session"):
+            try:
+                _load_session_into_state(sel["name"])
+                st.success(f"Loaded session: {sel['name']}")
+                st.rerun()
+            except Exception as e:
+                st.exception(e)
+        if col_b.button("Delete", key="btn_delete_session"):
+            persistence.delete_session(sel["name"])
+            st.warning(f"Deleted session: {sel['name']}")
+            st.rerun()
+
+
 # ---------- step 1: upload ----------
 with st.expander("Step 1 — Upload a game video", expanded=ss.video_path is None):
     uploaded = st.file_uploader(
@@ -54,11 +128,36 @@ with st.expander("Step 1 — Upload a game video", expanded=ss.video_path is Non
     if uploaded is not None:
         dst = UPLOAD_DIR / uploaded.name
         dst.write_bytes(uploaded.getbuffer())
+        already_had_session = persistence.has_session(dst)
         ss.video_path = str(dst)
         ss.result = None
         ss.calibration = None
         ss.calibration_points = []
+        ss.basket_calibration = None
+        ss.rim_points = [(0, 0), (0, 0)]
+        ss.heavy_cache = None
+        ss.override_editor_df = None
         st.success(f"Uploaded to {dst}")
+        if already_had_session:
+            st.info(
+                f"A saved session already exists for `{dst.stem}`. Use "
+                "**Restore saved session for this video** below, or pick "
+                "it from the sidebar."
+            )
+
+    if ss.video_path and persistence.has_session(ss.video_path) and ss.heavy_cache is None:
+        if st.button(
+            "Restore saved session for this video",
+            type="secondary",
+            key="btn_restore_for_video",
+        ):
+            try:
+                _load_session_into_state(Path(ss.video_path).stem)
+                st.success("Restored.")
+                st.rerun()
+            except Exception as e:
+                st.exception(e)
+
     if ss.video_path:
         st.write(f"**Active video:** `{ss.video_path}`")
         try:
@@ -219,7 +318,8 @@ if ss.video_path and ss.calibration is not None:
                 ss.heavy_cache = heavy
                 ss.result = result
                 ss.override_editor_df = None  # rebuild from new tracks
-                st.success("Analysis complete.")
+                _persist_current_session()
+                st.success("Analysis complete and saved.")
             except Exception as e:
                 st.exception(e)
 
@@ -327,7 +427,8 @@ if ss.heavy_cache is not None and ss.result is not None:
                     on_status=on_status,
                 )
                 ss.override_editor_df = None
-                st.success("Re-run complete.")
+                _persist_current_session()
+                st.success("Re-run complete and saved.")
             except Exception as e:
                 st.exception(e)
 

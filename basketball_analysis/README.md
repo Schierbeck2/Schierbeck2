@@ -31,6 +31,10 @@ Given a video of a game (single fixed-ish camera view works best) you get:
   pose) is cached in-session, so you can fix wrong jersey numbers or team
   assignments and re-run only the cheap analytics (shots, possessions,
   rebounds, stats, coach) without re-tracking.
+- **Persistent sessions** — every analysis is auto-saved to
+  `data/cache/<video-stem>/`. Restart the app the next day, pick the
+  session from the sidebar, and tweak overrides without re-running YOLO
+  or OCR.
 - **Highlight clips** — auto-cut short clips around detected shot events.
 
 Everything runs locally. The only external service is the Claude API for the
@@ -65,6 +69,16 @@ Open the URL Streamlit prints (usually <http://localhost:8501>).
    backwards or some jersey numbers are wrong, edit the override table
    in *Step 3b* and click **Re-run rollups**. Tracking and OCR are reused
    from the first pass, so this is much faster than re-running from scratch.
+6. **Coming back later**: every analysis is auto-saved. Pick the session
+   from the **Saved sessions** sidebar to restore the tracker output,
+   calibration, and last result. From there you can edit overrides and
+   re-run rollups without redoing the slow tracking pass.
+
+Saved sessions live in `data/cache/<video-stem>/` and are git-ignored;
+delete the directory (or use the **Delete** button in the sidebar) to
+clear one out. The original video file is referenced by path, not copied
+into the cache, so don't delete files in `data/uploads/` if you want
+highlight clips to keep working after a reload.
 
 ## Why a hybrid approach?
 
@@ -117,7 +131,8 @@ basketball_analysis/
     stats.py              # aggregate per-player and team stats
     clips.py              # cut highlight clips around events
     coach.py              # Claude coaching notes
-    report.py             # build the final report dict
+    report.py             # heavy + light pipeline phases, final report
+    persistence.py        # save / load / list sessions in data/cache/
     plots.py              # shot chart and overlay rendering
   data/
     uploads/  outputs/  clips/  cache/
