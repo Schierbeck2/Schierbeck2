@@ -1,4 +1,4 @@
-"""CourtSense — basketball game analyzer package."""
+"""Reelplay — basketball game analyzer package."""
 
 __all__ = [
     "config",

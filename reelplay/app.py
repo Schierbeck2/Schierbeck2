@@ -1,4 +1,4 @@
-"""Streamlit UI for CourtSense, the basketball game analyzer.
+"""Streamlit UI for Reelplay, the basketball game analyzer.
 
 Run with:
     streamlit run app.py
@@ -26,9 +26,9 @@ from analyzer.report import run as run_pipeline
 from analyzer.video import probe, read_frame
 
 
-st.set_page_config(page_title="CourtSense", layout="wide")
+st.set_page_config(page_title="Reelplay", layout="wide")
 
-st.title("🏀 CourtSense")
+st.title("🏀 Reelplay")
 st.caption(
     "Upload a game recording, calibrate the court, and get a coaching "
     "report with stats, a shot chart, and highlight clips."
