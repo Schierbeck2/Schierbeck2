@@ -35,6 +35,14 @@ Given a video of a game (single fixed-ish camera view works best) you get:
   `data/cache/<video-stem>/`. Restart the app the next day, pick the
   session from the sidebar, and tweak overrides without re-running YOLO
   or OCR.
+- **Shareable session bundles** — export any session as a single `.zip`
+  another coach can drop into their app's sidebar. Toggle whether to
+  include the original video file (smaller bundle vs. bundle that comes
+  with highlight clips intact).
+- **Game-to-game comparison** — pick a previous saved session in the
+  Compare tab; the app matches teams by jersey-number overlap and
+  players by jersey number, then shows prev / curr / delta tables for
+  shooting, possessions, half-court vs transition, and rebounding.
 - **Highlight clips** — auto-cut short clips around detected shot events.
 
 Everything runs locally. The only external service is the Claude API for the
@@ -108,6 +116,10 @@ This is an MVP, not a broadcast-grade analytics product. Specifically:
   panning or sideline-to-sideline switches will move the rim positions
   away from where they were calibrated and degrade the half-court vs
   transition split.
+- Game-to-game comparison matches teams by the overlap of jersey numbers
+  on each roster and players by jersey number within each matched team.
+  If neither game has reliable jersey reads, the team match falls back to
+  ID equality (team A → team A) and the player diff will be empty.
 - Best with a fixed camera. Heavy zooms / cuts / multi-cam broadcast feeds
   will degrade tracking.
 - A single CPU is fine for short clips (<2 min); for full-game video a CUDA
@@ -132,7 +144,8 @@ basketball_analysis/
     clips.py              # cut highlight clips around events
     coach.py              # Claude coaching notes
     report.py             # heavy + light pipeline phases, final report
-    persistence.py        # save / load / list sessions in data/cache/
+    persistence.py        # save / load / list / export / import sessions
+    diff.py               # game-to-game stat comparison
     plots.py              # shot chart and overlay rendering
   data/
     uploads/  outputs/  clips/  cache/

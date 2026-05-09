@@ -18,15 +18,17 @@ cache directory.
 
 from __future__ import annotations
 
+import io
 import json
 import pickle
 import shutil
 import time
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
 
-from .config import CACHE_DIR
+from .config import CACHE_DIR, UPLOAD_DIR
 
 
 SESSION_VERSION = 1
@@ -191,3 +193,97 @@ def delete_session(name: str) -> None:
     d = session_dir_by_name(name)
     if d.is_dir():
         shutil.rmtree(d)
+
+
+# ---------------------------------------------------------------------------
+# Portable session bundles (zip files) for sharing between coaches.
+# ---------------------------------------------------------------------------
+
+_BUNDLE_FILES = (HEAVY_PKL, CALIB_PKL, META_JSON, RESULT_JSON)
+
+
+def export_bundle_bytes(name: str, include_video: bool = False) -> bytes:
+    """Zip a session into a single file the user can email / upload.
+
+    The zip always contains heavy.pkl, calibration.pkl, session.json, and
+    result.json. If `include_video` is True and the original video file
+    still exists, it is added under `video/<filename>`.
+    """
+    src = session_dir_by_name(name)
+    if not src.exists():
+        raise FileNotFoundError(f"No session named {name!r}")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in _BUNDLE_FILES:
+            p = src / fname
+            if p.exists():
+                zf.write(p, arcname=fname)
+        if include_video:
+            meta_path = src / META_JSON
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text() or "{}")
+                vp = Path(meta.get("video_path", ""))
+                if vp.exists():
+                    zf.write(vp, arcname=f"video/{vp.name}")
+    return buf.getvalue()
+
+
+def import_bundle(zip_bytes: bytes) -> str:
+    """Extract a session bundle into `data/cache/<name>/` and return the
+    chosen session name. Disambiguates against existing names.
+
+    If the bundle includes a video, it is placed in `data/uploads/` and the
+    session's metadata + heavy cache are rewritten to point at that local
+    copy so re-runs work on the receiving machine.
+    """
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+        names = zf.namelist()
+        if META_JSON not in names or HEAVY_PKL not in names:
+            raise ValueError("Not a valid session bundle (missing required files).")
+
+        meta_data = json.loads(zf.read(META_JSON))
+        base_name = Path(meta_data.get("video_path", "imported")).stem or "imported"
+
+        # Disambiguate name to avoid clobbering an existing session.
+        candidate = base_name
+        i = 1
+        while (CACHE_DIR / candidate).exists():
+            i += 1
+            candidate = f"{base_name}_imported_{i}"
+        dest = CACHE_DIR / candidate
+        dest.mkdir(parents=True, exist_ok=True)
+
+        for fname in _BUNDLE_FILES:
+            if fname in names:
+                (dest / fname).write_bytes(zf.read(fname))
+
+        video_entries = [n for n in names if n.startswith("video/") and not n.endswith("/")]
+        new_video_path: Optional[Path] = None
+        if video_entries:
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            video_filename = Path(video_entries[0]).name
+            target = UPLOAD_DIR / video_filename
+            if not target.exists():
+                target.write_bytes(zf.read(video_entries[0]))
+            new_video_path = target
+
+    if new_video_path is not None:
+        # Patch session.json to point at the local video.
+        meta_path = dest / META_JSON
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text() or "{}")
+            meta["video_path"] = str(new_video_path)
+            meta_path.write_text(json.dumps(meta, indent=2))
+        # Patch heavy.pkl's video_path in-place so recompute() works.
+        heavy_path = dest / HEAVY_PKL
+        if heavy_path.exists():
+            with heavy_path.open("rb") as f:
+                heavy = pickle.load(f)
+            try:
+                heavy.video_path = str(new_video_path)
+            except Exception:
+                pass
+            with heavy_path.open("wb") as f:
+                pickle.dump(heavy, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    return candidate

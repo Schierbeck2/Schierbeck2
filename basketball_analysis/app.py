@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from analyzer import diff as diff_mod
 from analyzer import persistence
 from analyzer.config import OUTPUT_DIR, SETTINGS, UPLOAD_DIR
 from analyzer.court import BasketCalibration, calibrate
@@ -75,7 +76,7 @@ def _load_session_into_state(name: str) -> None:
     ss.override_editor_df = None
 
 
-# ---------- sidebar: saved sessions ----------
+# ---------- sidebar: saved sessions + bundle import/export ----------
 with st.sidebar:
     st.header("Saved sessions")
     sessions = persistence.list_sessions()
@@ -116,6 +117,44 @@ with st.sidebar:
             persistence.delete_session(sel["name"])
             st.warning(f"Deleted session: {sel['name']}")
             st.rerun()
+
+        st.divider()
+        st.subheader("Share")
+        include_video = st.checkbox(
+            "Include video file (larger, but recipient gets highlight clips too)",
+            value=False,
+            key="bundle_include_video",
+        )
+        try:
+            bundle_bytes = persistence.export_bundle_bytes(
+                sel["name"], include_video=include_video
+            )
+            st.download_button(
+                "Export bundle (.zip)",
+                data=bundle_bytes,
+                file_name=f"{sel['name']}.bball.zip",
+                mime="application/zip",
+                key="btn_export_bundle",
+            )
+            st.caption(f"Bundle size: {len(bundle_bytes) / 1024:.1f} KB")
+        except Exception as e:
+            st.warning(f"Cannot prepare bundle: {e}")
+
+    st.divider()
+    st.subheader("Import session")
+    incoming = st.file_uploader(
+        "Drop a .bball.zip from a teammate",
+        type=["zip"],
+        accept_multiple_files=False,
+        key="bundle_uploader",
+    )
+    if incoming is not None and st.button("Import", key="btn_import_bundle"):
+        try:
+            new_name = persistence.import_bundle(incoming.getvalue())
+            st.success(f"Imported as `{new_name}`. Pick it from the list above.")
+            st.rerun()
+        except Exception as e:
+            st.exception(e)
 
 
 # ---------- step 1: upload ----------
@@ -439,7 +478,8 @@ if ss.result is not None:
     st.header("Results")
 
     tabs = st.tabs(
-        ["Team report", "Players", "Shot chart", "Possessions", "Highlights", "Raw data"]
+        ["Team report", "Players", "Shot chart", "Possessions",
+         "Highlights", "Compare", "Raw data"]
     )
 
     # --- team report
@@ -617,8 +657,89 @@ if ss.result is not None:
             except Exception:
                 st.write(clip["path"])
 
-    # --- raw
+    # --- compare
     with tabs[5]:
+        st.subheader("Compare with a previous game")
+        all_sessions = persistence.list_sessions()
+        # Exclude whatever session matches the current loaded video.
+        current_stem = Path(result.video_path).stem
+        candidates = [s for s in all_sessions if s.get("name") != current_stem]
+        if not candidates:
+            st.info(
+                "Save at least one other session (or import a teammate's bundle) "
+                "to enable comparison."
+            )
+        else:
+            labels = []
+            for s in candidates:
+                ts = s.get("saved_at")
+                when = ""
+                if ts:
+                    from datetime import datetime
+                    when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                labels.append(f"{s['name']} ({when})")
+            idx = st.selectbox(
+                "Previous game",
+                options=list(range(len(candidates))),
+                format_func=lambda i: labels[i],
+                key="compare_prev_choice",
+            )
+            prev_meta = candidates[idx]
+            if st.button("Run comparison", key="btn_run_compare"):
+                try:
+                    prev_bundle = persistence.load_session(prev_meta["name"])
+                    prev_result = prev_bundle.get("result")
+                    if prev_result is None:
+                        st.warning(
+                            "That session has no saved analysis result yet. "
+                            "Open it once and re-run rollups, then try again."
+                        )
+                    else:
+                        out = diff_mod.compute_diff(prev_result, result)
+                        st.session_state["compare_output"] = {
+                            "prev_name": prev_meta["name"],
+                            "out": out,
+                        }
+                except Exception as e:
+                    st.exception(e)
+
+            cmp_state = st.session_state.get("compare_output")
+            if cmp_state and cmp_state.get("prev_name") == prev_meta["name"]:
+                out = cmp_state["out"]
+                team_match = out.get("team_match", {})
+                if not team_match:
+                    st.warning(
+                        "No teams could be matched between the two games. "
+                        "Make sure both have at least some readable jersey "
+                        "numbers."
+                    )
+
+                st.markdown("**Team-level changes**")
+                team_rows = out.get("teams") or []
+                if team_rows:
+                    df = pd.DataFrame(team_rows)
+                    df = df.pivot_table(
+                        index=["team", "metric"],
+                        values=["prev", "curr", "delta"],
+                        aggfunc="first",
+                    ).reset_index()
+                    st.dataframe(df, hide_index=True)
+                else:
+                    st.info("No team metrics available.")
+
+                st.markdown("**Per-player changes (matched by jersey number)**")
+                player_rows = out.get("players") or []
+                if player_rows:
+                    pdf = pd.DataFrame(player_rows)
+                    st.dataframe(pdf, hide_index=True)
+                else:
+                    st.info(
+                        "No players could be matched. Either jersey OCR was "
+                        "weak in one of the games or the rosters don't overlap."
+                    )
+
+    # --- raw
+    with tabs[6]:
         st.download_button(
             "Download analysis JSON",
             data=json.dumps(
