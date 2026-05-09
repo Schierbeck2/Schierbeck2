@@ -18,6 +18,11 @@ Given a video of a game (single fixed-ish camera view works best) you get:
   decision-making.
 - **Stats and shot chart** — FG% by zone, attempts, makes, plus a
   half-court shot chart (after a one-time 4-point court calibration).
+- **Possession & rebound tracking** — per-frame ball ownership coalesced
+  into possession blocks; offensive/defensive rebounds attributed to each
+  missed shot.
+- **Jersey-number OCR** — best-effort reading of each player's number so
+  reports say "Team A #7" instead of "Player #4".
 - **Highlight clips** — auto-cut short clips around detected shot events.
 
 Everything runs locally. The only external service is the Claude API for the
@@ -58,11 +63,15 @@ Open the URL Streamlit prints (usually <http://localhost:8501>).
 
 This is an MVP, not a broadcast-grade analytics product. Specifically:
 
-- Player IDs are stable within continuous tracking but jersey numbers are not
-  read by default — you may see "Player #4" rather than a real number. You can
-  rename players in the UI after analysis.
+- Jersey-number OCR is best-effort: small/blurry numbers, occlusion, and
+  shaky cameras hurt accuracy. Players whose number can't be read fall back
+  to a `Player #<track_id>` label.
 - Shot detection uses ball-trajectory + rim-region heuristics. Made vs.
   missed is approximate.
+- Possession is inferred from ball-to-player proximity. Rapid passes inside
+  a tight cluster of players will sometimes assign the wrong owner.
+- Rebound classification (OREB vs DREB) depends on team-color clustering
+  being right, which can fail with similar uniforms.
 - Best with a fixed camera. Heavy zooms / cuts / multi-cam broadcast feeds
   will degrade tracking.
 - A single CPU is fine for short clips (<2 min); for full-game video a CUDA
@@ -77,10 +86,12 @@ basketball_analysis/
     __init__.py
     config.py             # paths, env, runtime config
     video.py              # frame iteration, sampling, writing
-    tracker.py            # YOLO + ByteTrack detect + track
+    tracker.py            # YOLO + ByteTrack detect + track, team-color cluster
     court.py              # 4-point homography for shot chart
+    jersey.py             # EasyOCR jersey-number reading
     pose.py               # MediaPipe pose for shooting-form notes
-    events.py             # shot/possession/rebound heuristics
+    events.py             # shot detection heuristics
+    possession.py         # per-frame ball owner + rebound attribution
     stats.py              # aggregate per-player and team stats
     clips.py              # cut highlight clips around events
     coach.py              # Claude coaching notes

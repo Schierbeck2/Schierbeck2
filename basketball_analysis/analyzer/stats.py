@@ -1,4 +1,4 @@
-"""Roll up tracker output + shot events into team and per-player stats."""
+"""Roll up tracker output + shot/possession/rebound events into stats."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass, asdict, field
 from typing import Optional
 
 from .events import ShotEvent
+from .possession import Possession, Rebound
 from .tracker import Detection
 
 
@@ -15,6 +16,7 @@ class PlayerStats:
     track_id: int
     team: Optional[int]
     display_name: str
+    jersey_number: Optional[str] = None
     frames_seen: int = 0
     seconds_on_court: float = 0.0
     shots_attempted: int = 0
@@ -22,6 +24,10 @@ class PlayerStats:
     shots_by_zone: dict[str, dict[str, int]] = field(
         default_factory=lambda: defaultdict(lambda: {"att": 0, "make": 0})
     )
+    possessions: int = 0
+    possession_time_s: float = 0.0
+    offensive_rebounds: int = 0
+    defensive_rebounds: int = 0
 
     @property
     def fg_pct(self) -> Optional[float]:
@@ -29,9 +35,14 @@ class PlayerStats:
             return None
         return self.shots_made / self.shots_attempted
 
+    @property
+    def total_rebounds(self) -> int:
+        return self.offensive_rebounds + self.defensive_rebounds
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["fg_pct"] = self.fg_pct
+        d["total_rebounds"] = self.total_rebounds
         d["shots_by_zone"] = {z: dict(v) for z, v in self.shots_by_zone.items()}
         return d
 
@@ -45,6 +56,10 @@ class TeamStats:
     shots_by_zone: dict[str, dict[str, int]] = field(
         default_factory=lambda: defaultdict(lambda: {"att": 0, "make": 0})
     )
+    possessions: int = 0
+    possession_time_s: float = 0.0
+    offensive_rebounds: int = 0
+    defensive_rebounds: int = 0
 
     @property
     def fg_pct(self) -> Optional[float]:
@@ -52,9 +67,14 @@ class TeamStats:
             return None
         return self.shots_made / self.shots_attempted
 
+    @property
+    def total_rebounds(self) -> int:
+        return self.offensive_rebounds + self.defensive_rebounds
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["fg_pct"] = self.fg_pct
+        d["total_rebounds"] = self.total_rebounds
         d["shots_by_zone"] = {z: dict(v) for z, v in self.shots_by_zone.items()}
         return d
 
@@ -65,11 +85,16 @@ def aggregate(
     teams: dict[int, int],
     fps: float,
     name_overrides: dict[int, str] | None = None,
+    jersey_numbers: dict[int, str | None] | None = None,
+    possessions: list[Possession] | None = None,
+    rebounds: list[Rebound] | None = None,
 ) -> tuple[dict[int, PlayerStats], dict[int, TeamStats]]:
     name_overrides = name_overrides or {}
+    jersey_numbers = jersey_numbers or {}
+    possessions = possessions or []
+    rebounds = rebounds or []
     players: dict[int, PlayerStats] = {}
 
-    # On-court time per player.
     seen: dict[int, int] = defaultdict(int)
     for d in detections:
         if d.cls != "player":
@@ -80,11 +105,11 @@ def aggregate(
             track_id=tid,
             team=teams.get(tid),
             display_name=name_overrides.get(tid, f"Player #{tid}"),
+            jersey_number=jersey_numbers.get(tid),
             frames_seen=count,
             seconds_on_court=count / fps if fps else 0.0,
         )
 
-    # Shooting.
     for s in shots:
         if s.shooter_track_id is None:
             continue
@@ -96,6 +121,7 @@ def aggregate(
                 display_name=name_overrides.get(
                     s.shooter_track_id, f"Player #{s.shooter_track_id}"
                 ),
+                jersey_number=jersey_numbers.get(s.shooter_track_id),
             )
             players[s.shooter_track_id] = ps
         ps.shots_attempted += 1
@@ -107,7 +133,32 @@ def aggregate(
             if s.made:
                 zb["make"] += 1
 
-    # Roll up to teams.
+    for p in possessions:
+        if p.track_id is None:
+            continue
+        ps = players.get(p.track_id)
+        if ps is None:
+            ps = PlayerStats(
+                track_id=p.track_id,
+                team=p.team,
+                display_name=name_overrides.get(p.track_id, f"Player #{p.track_id}"),
+                jersey_number=jersey_numbers.get(p.track_id),
+            )
+            players[p.track_id] = ps
+        ps.possessions += 1
+        ps.possession_time_s += p.duration_s
+
+    for r in rebounds:
+        if r.rebounder_track_id is None or r.kind == "unknown":
+            continue
+        ps = players.get(r.rebounder_track_id)
+        if ps is None:
+            continue
+        if r.kind == "offensive":
+            ps.offensive_rebounds += 1
+        elif r.kind == "defensive":
+            ps.defensive_rebounds += 1
+
     by_team: dict[int, TeamStats] = {}
     for ps in players.values():
         if ps.team is None:
@@ -119,6 +170,10 @@ def aggregate(
         ts.players.append(ps.track_id)
         ts.shots_attempted += ps.shots_attempted
         ts.shots_made += ps.shots_made
+        ts.possessions += ps.possessions
+        ts.possession_time_s += ps.possession_time_s
+        ts.offensive_rebounds += ps.offensive_rebounds
+        ts.defensive_rebounds += ps.defensive_rebounds
         for zone, zb in ps.shots_by_zone.items():
             tzb = ts.shots_by_zone[zone]
             tzb["att"] += zb["att"]

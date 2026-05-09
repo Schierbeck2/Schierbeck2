@@ -180,7 +180,9 @@ if ss.result is not None:
     result = ss.result
     st.header("Results")
 
-    tabs = st.tabs(["Team report", "Players", "Shot chart", "Highlights", "Raw data"])
+    tabs = st.tabs(
+        ["Team report", "Players", "Shot chart", "Possessions", "Highlights", "Raw data"]
+    )
 
     # --- team report
     with tabs[0]:
@@ -202,11 +204,16 @@ if ss.result is not None:
         for tid, ts in result.team_stats.items():
             rows.append(
                 {
-                    "team": tid,
+                    "team": chr(ord("A") + int(tid)),
                     "players": len(ts["players"]),
-                    "shots_attempted": ts["shots_attempted"],
+                    "shots_att": ts["shots_attempted"],
                     "shots_made": ts["shots_made"],
                     "fg_pct": ts.get("fg_pct"),
+                    "possessions": ts.get("possessions", 0),
+                    "poss_time_s": round(ts.get("possession_time_s", 0), 1),
+                    "OREB": ts.get("offensive_rebounds", 0),
+                    "DREB": ts.get("defensive_rebounds", 0),
+                    "REB": ts.get("total_rebounds", 0),
                 }
             )
         if rows:
@@ -222,11 +229,19 @@ if ss.result is not None:
                 {
                     "track_id": tid,
                     "name": ps.get("display_name"),
-                    "team": ps.get("team"),
+                    "jersey": ps.get("jersey_number") or "?",
+                    "team": (
+                        chr(ord("A") + int(ps["team"]))
+                        if ps.get("team") is not None else "?"
+                    ),
                     "minutes": round(ps.get("seconds_on_court", 0) / 60.0, 2),
-                    "shots_attempted": ps.get("shots_attempted", 0),
+                    "shots_att": ps.get("shots_attempted", 0),
                     "shots_made": ps.get("shots_made", 0),
                     "fg_pct": ps.get("fg_pct"),
+                    "poss": ps.get("possessions", 0),
+                    "poss_time_s": round(ps.get("possession_time_s", 0), 1),
+                    "OREB": ps.get("offensive_rebounds", 0),
+                    "DREB": ps.get("defensive_rebounds", 0),
                 }
             )
         if rows:
@@ -272,8 +287,58 @@ if ss.result is not None:
         else:
             st.info("No shots detected.")
 
-    # --- highlights
+    # --- possessions
     with tabs[3]:
+        st.subheader("Possessions")
+        if result.possessions:
+            poss_rows = []
+            name_by_tid = {
+                int(tid): ps.get("display_name") for tid, ps in result.player_stats.items()
+            }
+            for p in result.possessions:
+                poss_rows.append(
+                    {
+                        "t_start": round(p.get("t_start", 0), 1),
+                        "duration_s": round(p.get("duration_s", 0), 2),
+                        "team": (
+                            chr(ord("A") + int(p["team"]))
+                            if p.get("team") is not None else "?"
+                        ),
+                        "owner": name_by_tid.get(int(p.get("track_id") or -1), "?"),
+                        "frames": p.get("n_frames"),
+                    }
+                )
+            st.dataframe(pd.DataFrame(poss_rows), hide_index=True)
+        else:
+            st.info("No possessions detected.")
+
+        st.subheader("Rebounds")
+        if result.rebounds:
+            reb_rows = []
+            name_by_tid = {
+                int(tid): ps.get("display_name") for tid, ps in result.player_stats.items()
+            }
+            for r in result.rebounds:
+                reb_rows.append(
+                    {
+                        "t": round(r.get("t_seconds", 0), 1),
+                        "kind": r.get("kind"),
+                        "rebounder": name_by_tid.get(
+                            int(r.get("rebounder_track_id") or -1), "?"
+                        ),
+                        "team": (
+                            chr(ord("A") + int(r["rebounder_team"]))
+                            if r.get("rebounder_team") is not None else "?"
+                        ),
+                        "shot_idx": r.get("shot_index"),
+                    }
+                )
+            st.dataframe(pd.DataFrame(reb_rows), hide_index=True)
+        else:
+            st.info("No rebounds inferred (need at least one missed shot followed by a possession).")
+
+    # --- highlights
+    with tabs[4]:
         if not result.clips:
             st.info("No highlight clips were generated.")
         for clip in result.clips:
@@ -289,7 +354,7 @@ if ss.result is not None:
                 st.write(clip["path"])
 
     # --- raw
-    with tabs[4]:
+    with tabs[5]:
         st.download_button(
             "Download analysis JSON",
             data=json.dumps(
@@ -298,7 +363,10 @@ if ss.result is not None:
                     "fps": result.fps,
                     "duration_s": result.duration_s,
                     "teams": result.teams,
+                    "jersey_numbers": result.jersey_numbers,
                     "shot_events": result.shot_events,
+                    "possessions": result.possessions,
+                    "rebounds": result.rebounds,
                     "form_metrics": result.form_metrics,
                     "player_stats": result.player_stats,
                     "team_stats": result.team_stats,
@@ -315,6 +383,8 @@ if ss.result is not None:
             {
                 "n_detections": len(result.detections),
                 "n_shots": len(result.shot_events),
+                "n_possessions": len(result.possessions),
+                "n_rebounds": len(result.rebounds),
                 "n_clips": len(result.clips),
                 "teams": result.teams,
             }

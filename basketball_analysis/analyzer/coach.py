@@ -23,13 +23,19 @@ a team that just reviewed footage of a single game. You receive:
 
   - Aggregate stats from a computer-vision tracker (player on-court time,
     shot attempts, shot zones, approximate makes/misses).
+  - Possession data: how many possessions each player and team had, and
+    average/median possession duration.
+  - Rebound data: offensive vs defensive rebounds per player, attached to
+    the missed shot they followed.
   - Pose-derived shooting-form metrics for shot attempts (elbow angle, knee
     bend, release height ratio, balance offset).
   - A small set of sampled frames around shot events.
 
 Important: the stats come from heuristic tracking and may be imperfect.
-Make/miss labels are approximate. Comment qualitatively when the numbers are
-small; do not over-claim. When in doubt, say so.
+Make/miss labels are approximate, possession is inferred from ball-to-player
+proximity, and offensive vs defensive rebound classification depends on the
+team-color clustering. Comment qualitatively when the numbers are small; do
+not over-claim. When in doubt, say so.
 
 Your output should be:
   - Concrete and actionable (drills, cues, decisions to make differently).
@@ -62,6 +68,8 @@ def _build_user_blocks(
     player_stats: list[dict],
     shot_events: list[dict],
     form_metrics: list[dict],
+    possessions: list[dict],
+    rebounds: list[dict],
     sample_frames_b64: list[str],
 ) -> list[dict]:
     schema = {
@@ -81,13 +89,16 @@ def _build_user_blocks(
         "instructions": (
             "Write a coaching report for this team and each named player. "
             "Be specific. Reference shot zones, makes/misses, on-court time, "
-            "and any clear pose-form patterns. Match the schema exactly."
+            "possession time, offensive vs defensive rebounding, and any "
+            "clear pose-form patterns. Match the schema exactly."
         ),
         "schema": schema,
         "team_stats": team_stats,
         "player_stats": player_stats,
         "shot_events": shot_events,
         "form_metrics": form_metrics,
+        "possessions_summary": _summarize_possessions(possessions),
+        "rebounds": rebounds,
     }
     blocks: list[dict] = [{"type": "text", "text": json.dumps(payload, indent=2)}]
     for b64 in sample_frames_b64[:8]:  # cap to keep tokens reasonable
@@ -111,16 +122,18 @@ def generate_report(
     player_stats: list[dict],
     shot_events: list[dict],
     form_metrics: list[dict],
+    possessions: list[dict],
+    rebounds: list[dict],
     sample_frames_bgr: list,
 ) -> CoachOutput:
     """Call Claude to produce the coaching report."""
     if not SETTINGS.anthropic_api_key:
-        return _offline_fallback(team_stats, player_stats, shot_events)
+        return _offline_fallback(team_stats, player_stats, shot_events, rebounds)
 
     try:
         import anthropic
     except ImportError:
-        return _offline_fallback(team_stats, player_stats, shot_events)
+        return _offline_fallback(team_stats, player_stats, shot_events, rebounds)
 
     client = anthropic.Anthropic(api_key=SETTINGS.anthropic_api_key)
     sample_b64 = [_encode_image_jpeg(f) for f in sample_frames_bgr]
@@ -140,7 +153,7 @@ def generate_report(
                 "role": "user",
                 "content": _build_user_blocks(
                     team_stats, player_stats, shot_events,
-                    form_metrics, sample_b64,
+                    form_metrics, possessions, rebounds, sample_b64,
                 ),
             }
         ],
@@ -177,8 +190,29 @@ def _parse(text: str) -> CoachOutput:
     )
 
 
+def _summarize_possessions(possessions: list[dict]) -> dict:
+    if not possessions:
+        return {"count": 0}
+    durations = [p.get("duration_s", 0.0) for p in possessions]
+    by_team: dict[int, int] = {}
+    for p in possessions:
+        t = p.get("team")
+        if t is None:
+            continue
+        by_team[t] = by_team.get(t, 0) + 1
+    return {
+        "count": len(possessions),
+        "avg_duration_s": sum(durations) / max(1, len(durations)),
+        "median_duration_s": sorted(durations)[len(durations) // 2] if durations else 0,
+        "by_team": by_team,
+    }
+
+
 def _offline_fallback(
-    team_stats: list[dict], player_stats: list[dict], shot_events: list[dict]
+    team_stats: list[dict],
+    player_stats: list[dict],
+    shot_events: list[dict],
+    rebounds: list[dict] | None = None,
 ) -> CoachOutput:
     """Produce a minimal heuristic report when no API key is configured."""
     msg = (
@@ -190,9 +224,15 @@ def _offline_fallback(
         name = ps.get("display_name", f"Player #{ps.get('track_id')}")
         att = ps.get("shots_attempted", 0)
         made = ps.get("shots_made", 0)
+        oreb = ps.get("offensive_rebounds", 0)
+        dreb = ps.get("defensive_rebounds", 0)
+        poss = ps.get("possessions", 0)
         per_player[name] = {
-            "summary": f"On-court time {ps.get('seconds_on_court', 0):.0f}s, "
-                        f"attempts {att}, makes {made}.",
+            "summary": (
+                f"On-court time {ps.get('seconds_on_court', 0):.0f}s, "
+                f"attempts {att}, makes {made}, possessions {poss}, "
+                f"OREB {oreb}, DREB {dreb}."
+            ),
             "strengths": [],
             "improvements": [],
             "shooting_form_notes": "",
