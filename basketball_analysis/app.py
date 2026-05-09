@@ -16,6 +16,7 @@ import streamlit as st
 
 from analyzer import diff as diff_mod
 from analyzer import persistence
+from analyzer import season as season_mod
 from analyzer.config import OUTPUT_DIR, SETTINGS, UPLOAD_DIR
 from analyzer.court import BasketCalibration, calibrate
 from analyzer.events import ShotEvent
@@ -155,6 +156,99 @@ with st.sidebar:
             st.rerun()
         except Exception as e:
             st.exception(e)
+
+
+# ---------- season trends (visible when 2+ saved sessions exist) ----------
+_n_saved = len(persistence.list_sessions())
+if _n_saved >= 2:
+    with st.expander(
+        f"Season trends — {_n_saved} games saved",
+        expanded=False,
+    ):
+        st.caption(
+            "Trends across every saved session. Teams are matched between "
+            "games by jersey-number overlap; players by jersey number."
+        )
+        season_sessions = season_mod.load_all_loaded_sessions()
+        if len(season_sessions) < 2:
+            st.info("Need at least two sessions with saved analysis results.")
+        else:
+            anchor_choice = st.selectbox(
+                "Roster anchor",
+                options=[s["name"] for s in season_sessions],
+                index=0,
+                help=(
+                    "The session whose team-A / team-B labeling everything "
+                    "else is mapped to. Defaults to the most recent."
+                ),
+                key="season_anchor",
+            )
+            df_long = season_mod.build_long_dataframe(
+                season_sessions, anchor_name=anchor_choice
+            )
+
+            tab_team, tab_player, tab_summary = st.tabs(
+                ["Team trends", "Player trends", "Season summary"]
+            )
+
+            with tab_team:
+                team_metric_options = [m for m, _ in diff_mod.TEAM_METRICS]
+                tm = st.selectbox(
+                    "Team metric",
+                    team_metric_options,
+                    index=team_metric_options.index("fg_pct") if "fg_pct" in team_metric_options else 0,
+                    key="season_team_metric",
+                )
+                wide = season_mod.team_trend(df_long, tm)
+                if wide.empty:
+                    st.info("No data for this metric.")
+                else:
+                    st.line_chart(wide)
+
+            with tab_player:
+                # Pick a team, then a jersey, then a metric.
+                player_subset = df_long[df_long["scope"] == "player"]
+                if player_subset.empty:
+                    st.info(
+                        "No player-level rows. This usually means jersey OCR "
+                        "didn't produce numbers in either game."
+                    )
+                else:
+                    teams_avail = sorted(player_subset["team"].dropna().unique().tolist())
+                    team_pick = st.selectbox(
+                        "Team", teams_avail, key="season_player_team"
+                    )
+                    jerseys_avail = sorted(
+                        player_subset[player_subset["team"] == team_pick]["jersey"].dropna().unique().tolist(),
+                        key=lambda x: int(x) if str(x).isdigit() else 99,
+                    )
+                    if not jerseys_avail:
+                        st.info("No players with readable jerseys for this team.")
+                    else:
+                        jersey_pick = st.selectbox(
+                            "Jersey #", jerseys_avail, key="season_player_jersey"
+                        )
+                        player_metric_options = [m for m, _ in diff_mod.PLAYER_METRICS]
+                        pm = st.selectbox(
+                            "Player metric",
+                            player_metric_options,
+                            index=player_metric_options.index("fg_pct") if "fg_pct" in player_metric_options else 0,
+                            key="season_player_metric",
+                        )
+                        wide_p = season_mod.player_trend(
+                            df_long, team_pick, jersey_pick, pm
+                        )
+                        if wide_p.empty:
+                            st.info("No data for that combination.")
+                        else:
+                            st.line_chart(wide_p)
+
+            with tab_summary:
+                summary = season_mod.season_summary(df_long)
+                if summary.empty:
+                    st.info("No team-level data available.")
+                else:
+                    st.dataframe(summary, hide_index=True)
 
 
 # ---------- step 1: upload ----------
@@ -484,6 +578,31 @@ if ss.result is not None:
 
     # --- team report
     with tabs[0]:
+        validation = getattr(result, "validation", {}) or {}
+        if validation.get("auto_fix_applied"):
+            st.info(
+                "Auto-fix applied: both teams' shots originally pointed at "
+                "the same rim, which usually means the team-color clustering "
+                "came out swapped. Team A↔B labels have been flipped. Use the "
+                "**Step 3b** override editor if you'd rather override this."
+            )
+        if validation.get("both_teams_same_rim"):
+            st.warning(
+                "Sanity check: both teams still have the same `attacking_rim`. "
+                "The auto-fix could not resolve this (probably because the "
+                "team mapping was overridden manually). Verify in the override "
+                "table that the right players are on each team."
+            )
+        wrong_team_ids = validation.get("high_wrong_rim_team_ids") or []
+        if wrong_team_ids:
+            labels = ", ".join(chr(ord("A") + int(t)) for t in wrong_team_ids)
+            st.warning(
+                f"Team(s) {labels}: more than 40% of their detected shots "
+                "point at the *other* basket. Either shot detection is "
+                "mis-attributing shooters, or this team's mapping is noisy. "
+                "Use Step 3b to inspect."
+            )
+
         c = result.coach
         st.subheader("Coach summary")
         st.write(c.get("team_summary") or "_(no summary)_")

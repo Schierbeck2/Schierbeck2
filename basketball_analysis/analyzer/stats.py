@@ -225,3 +225,32 @@ def aggregate(
             ts.transition_possessions += 1
 
     return players, by_team
+
+
+def validate_team_mapping(team_stats: dict[int, TeamStats]) -> dict:
+    """Sanity-check the team-cluster + attacking-rim assignment.
+
+    Returns:
+      both_teams_same_rim: True if every team that has a known attacking_rim
+        has the *same* one. This is the canonical "team labels are
+        swapped" failure: with two teams on a court the inferred attacking
+        rims should be opposite. If they're equal, the safest guess is
+        that the team-color clustering came out backwards.
+      high_wrong_rim_team_ids: teams where >=4 shots were attributed and
+        more than 40% of those shots point at the OTHER rim. This means
+        either the shot detection is mis-attributing shooters or the
+        team mapping is noisy enough that it can't be trusted; surfaced
+        as a warning, not auto-fixed.
+    """
+    rims = {ts.team_id: ts.attacking_rim for ts in team_stats.values() if ts.attacking_rim}
+    both_same = len(rims) >= 2 and len(set(rims.values())) == 1
+
+    high_wrong: list[int] = []
+    for ts in team_stats.values():
+        if ts.shots_attempted >= 4 and (ts.wrong_rim_shots / ts.shots_attempted) > 0.4:
+            high_wrong.append(ts.team_id)
+
+    return {
+        "both_teams_same_rim": bool(both_same),
+        "high_wrong_rim_team_ids": high_wrong,
+    }

@@ -43,6 +43,16 @@ Given a video of a game (single fixed-ish camera view works best) you get:
   Compare tab; the app matches teams by jersey-number overlap and
   players by jersey number, then shows prev / curr / delta tables for
   shooting, possessions, half-court vs transition, and rebounding.
+- **Season trends** — once you have two or more saved sessions, a
+  *Season trends* expander appears at the top of the page with
+  trend-line charts (per team and per player, across games) plus a
+  per-team season-summary table.
+- **Team-mapping self-check** — after every analysis the app verifies
+  that the two teams ended up attacking *opposite* rims; if they're
+  attacking the same rim (a tell that the team-color clustering came
+  out swapped) the labels are auto-flipped and a banner explains what
+  happened. A second warning surfaces teams whose `wrong_rim_shots`
+  ratio is suspiciously high.
 - **Highlight clips** — auto-cut short clips around detected shot events.
 
 Everything runs locally. The only external service is the Claude API for the
@@ -146,6 +156,7 @@ basketball_analysis/
     report.py             # heavy + light pipeline phases, final report
     persistence.py        # save / load / list / export / import sessions
     diff.py               # game-to-game stat comparison
+    season.py             # multi-game rollups + trend lines
     plots.py              # shot chart and overlay rendering
   data/
     uploads/  outputs/  clips/  cache/

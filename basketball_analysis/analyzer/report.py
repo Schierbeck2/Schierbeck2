@@ -66,6 +66,7 @@ class AnalysisResult:
     team_stats: dict[int, dict]
     clips: list[dict]
     coach: dict
+    validation: dict = field(default_factory=dict)
 
     def save(self, path: Path) -> Path:
         path = Path(path)
@@ -190,28 +191,39 @@ def recompute(
     if name_overrides:
         merged_names.update(name_overrides)
 
-    status("Detecting shot attempts...", 0.1)
-    shot_events = events_mod.detect_shots(
-        cache.detections,
-        court_calibration,
-        teams=teams,
-        fps=cache.fps,
-        basket_calib=basket_calibration,
-    )
-
-    status("Computing possessions...", 0.3)
+    # Per-frame owner / ball position do not depend on team labels, so
+    # compute them once and reuse if we end up auto-fixing the team mapping.
+    status("Computing per-frame ball ownership...", 0.1)
     owners = possession_mod.per_frame_owner(cache.detections)
     ball_xy = possession_mod.ball_xy_per_frame(cache.detections)
-    possessions = possession_mod.compute_possessions(
-        owners,
-        teams,
-        fps=cache.fps,
-        basket_calib=basket_calibration,
-        ball_xy=ball_xy,
-    )
 
-    status("Detecting rebounds...", 0.45)
-    rebounds = possession_mod.detect_rebounds(shot_events, possessions, teams)
+    def compute_for_teams(_teams: dict[int, int]):
+        s_events = events_mod.detect_shots(
+            cache.detections,
+            court_calibration,
+            teams=_teams,
+            fps=cache.fps,
+            basket_calib=basket_calibration,
+        )
+        possessions = possession_mod.compute_possessions(
+            owners,
+            _teams,
+            fps=cache.fps,
+            basket_calib=basket_calibration,
+            ball_xy=ball_xy,
+        )
+        rebounds = possession_mod.detect_rebounds(s_events, possessions, _teams)
+        ps, ts = stats_mod.aggregate(
+            cache.detections, s_events, _teams, fps=cache.fps,
+            name_overrides=merged_names,
+            jersey_numbers=jersey_numbers,
+            possessions=possessions,
+            rebounds=rebounds,
+        )
+        return s_events, possessions, rebounds, ps, ts
+
+    status("Detecting shots, possessions, and rebounds...", 0.3)
+    shot_events, possessions, rebounds, player_stats, team_stats = compute_for_teams(teams)
 
     status("Looking up shooting-form metrics...", 0.55)
     form_metrics: list[pose_mod.FormMetrics] = []
@@ -220,14 +232,35 @@ def recompute(
         if fm is not None:
             form_metrics.append(fm)
 
-    status("Aggregating stats...", 0.65)
-    player_stats, team_stats = stats_mod.aggregate(
-        cache.detections, shot_events, teams, fps=cache.fps,
-        name_overrides=merged_names,
-        jersey_numbers=jersey_numbers,
-        possessions=possessions,
-        rebounds=rebounds,
-    )
+    # Self-check the team mapping. If both teams ended up with the same
+    # attacking_rim it almost always means the team-color clustering came
+    # out backwards. Auto-fix by flipping team labels and re-aggregating.
+    validation = stats_mod.validate_team_mapping(team_stats)
+    auto_fix_applied = False
+    if (not team_overrides) and validation.get("both_teams_same_rim"):
+        teams = {tid: (1 - t) if t in (0, 1) else t for tid, t in teams.items()}
+        # Display names embed the team letter, so rebuild them too.
+        track_ids = tracker_mod.player_track_ids(cache.detections)
+        auto_names = jersey_mod.jersey_display_names(
+            track_ids,
+            {
+                tid: jersey_mod.JerseyReading(
+                    track_id=tid,
+                    number=jersey_numbers.get(tid),
+                    confidence=0.0,
+                    n_supporting_frames=0,
+                )
+                for tid in track_ids
+            },
+            teams,
+        )
+        merged_names = dict(auto_names)
+        if name_overrides:
+            merged_names.update(name_overrides)
+        shot_events, possessions, rebounds, player_stats, team_stats = compute_for_teams(teams)
+        validation = stats_mod.validate_team_mapping(team_stats)
+        auto_fix_applied = True
+    validation["auto_fix_applied"] = auto_fix_applied
 
     if skip_clips:
         status("Skipping highlight clips.", 0.75)
@@ -293,6 +326,7 @@ def recompute(
             "per_player": coach_out.per_player,
             "raw": coach_out.raw,
         },
+        validation=validation,
     )
     out_path = OUTPUT_DIR / (Path(cache.video_path).stem + ".analysis.json")
     result.save(out_path)

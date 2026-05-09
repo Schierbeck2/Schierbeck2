@@ -163,6 +163,7 @@ def _hydrate_result(d: dict):
         team_stats=to_int_keys(d.get("team_stats", {})),
         clips=d.get("clips", []),
         coach=d.get("coach", {}),
+        validation=d.get("validation", {}) or {},
     )
 
 
