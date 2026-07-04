@@ -3,6 +3,7 @@
   "short_name": "PhotoProc",
   "description": "Process photos with n8n workflow",
   "start_url": "/index.html",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#4285f4",
